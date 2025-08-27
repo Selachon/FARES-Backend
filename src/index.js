@@ -487,4 +487,4 @@ app.put("/api/admin/users/:username/password", requireAdmin, express.json(), asy
 });
 
 const port = process.env.PORT || 4000;
-app.listen(port, () => console.log(`API running on http://localhost:${port}`));
+app.listen(port, () => console.log(`API running on https://fares-backend.onrender.com/api`));
