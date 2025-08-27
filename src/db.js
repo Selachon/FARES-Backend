@@ -121,21 +121,6 @@ async function seed(db) {
     ]);
   }
 
-  const body = req.body || {};
-  const set = { updatedAt: new Date() };
-  ["INF", "FOR", "CERT"].forEach((k) => {
-    if (Object.prototype.hasOwnProperty.call(body, k)) {
-      set[`value.${k}`] = body[k] || "";
-    }
-  });
-  await db.collection("config").updateOne(
-    { key: "driveFolders", owner: req.user.companyId },
-    {
-      $set: set,
-      $setOnInsert: { value: { INF: "", FOR: "", CERT: "" } },
-    },
-    { upsert: true }
-  );
   const certs = db.collection("certificates");
   // if (await certs.countDocuments() === 0){
   //   const now = new Date()
