@@ -64,12 +64,12 @@ async function seed(db){
     ])
   }
   const certs = db.collection('certificates')
-  if (await certs.countDocuments() === 0){
-    const now = new Date()
-    await certs.insertMany([
-      { numCert:1001, serial:'A1B2C3', fechaCargue: now, resultado:'CUMPLE', empresa:'SURGAS', assignedUsers:['surgas','surgas.compras'], links:{ informes:'#', formatos:'#', certificados:'#' } },
-      { numCert:1002, serial:'Z9Y8X7', fechaCargue: new Date(now.getTime()-86400000*2), resultado:'NO CUMPLE', empresa:'SURGAS', assignedUsers:['surgas.logistica'], links:{ informes:'#', formatos:'#', certificados:'#' } },
-      { numCert:1003, serial:'QW12ER', fechaCargue: new Date(now.getTime()-86400000*4), resultado:'CUMPLE', empresa:'CHILCO', assignedUsers:['chilco'], links:{ informes:'#', formatos:'#', certificados:'#' } },
-    ])
-  }
+  // if (await certs.countDocuments() === 0){
+  //   const now = new Date()
+  //   await certs.insertMany([
+  //     { numCert:1001, serial:'A1B2C3', fechaCargue: now, resultado:'CUMPLE', empresa:'SURGAS', assignedUsers:['surgas','surgas.compras'], links:{ informes:'#', formatos:'#', certificados:'#' } },
+  //     { numCert:1002, serial:'Z9Y8X7', fechaCargue: new Date(now.getTime()-86400000*2), resultado:'NO CUMPLE', empresa:'SURGAS', assignedUsers:['surgas.logistica'], links:{ informes:'#', formatos:'#', certificados:'#' } },
+  //     { numCert:1003, serial:'QW12ER', fechaCargue: new Date(now.getTime()-86400000*4), resultado:'CUMPLE', empresa:'CHILCO', assignedUsers:['chilco'], links:{ informes:'#', formatos:'#', certificados:'#' } },
+  //   ])
+  // }
 }
