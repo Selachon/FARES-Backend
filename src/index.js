@@ -50,67 +50,31 @@ function requireAdmin(req, res, next) {
 }
 
 // ✅ MANTENER ESTAS (Mongo) — usan requireAdmin y guardan en collection "config"
-app.get("/api/admin/drive-folders", requireAdmin, async (req, res) => {
-  const db = await connect();
-  const doc = await db.collection("config").findOne({ key: "driveFolders" });
-  const fallback = {
-    INF: process.env.DRIVE_FOLDER_INF || "",
-    FOR: process.env.DRIVE_FOLDER_FOR || "",
-    CERT: process.env.DRIVE_FOLDER_CERT || "",
-  };
-  res.json(doc?.value || fallback);
-});
-
 app.put("/api/admin/drive-folders", requireAdmin, async (req, res) => {
   try {
     const db = await connect();
     const body = req.body || {};
 
-    // actualiza solo las claves que lleguen en el body
-    const keys = ["INF", "FOR", "CERT"].filter((k) =>
+    // actualiza solo claves presentes
+    const keys = ["INF","FOR","CERT"].filter(k =>
       Object.prototype.hasOwnProperty.call(body, k)
     );
-    if (keys.length === 0) {
-      return res.status(400).json({ message: "Nada para actualizar" });
-    }
+    if (keys.length === 0) return res.status(400).json({ message: "Nada para actualizar" });
 
-    // validar SOLO las claves provistas
-    for (const k of keys) {
-      const id = body[k];
-      if (!id) continue; // permitir vaciar
-      try {
-        const info = await drive.files.get({
-          fileId: id,
-          fields: "id,mimeType",
-          supportsAllDrives: true,
-        });
-        if (info.data.mimeType !== "application/vnd.google-apps.folder") {
-          return res.status(400).json({ message: `${k} no es una carpeta` });
-        }
-      } catch {
-        return res.status(400).json({ message: `ID inválido en ${k}` });
-      }
-    }
-
-    // set parcial en value.*
     const set = { updatedAt: new Date() };
     for (const k of keys) set[`value.${k}`] = body[k] || "";
 
     await db.collection("config").updateOne(
       { key: "driveFolders" },
-      {
-        $set: set,
-        $setOnInsert: { value: { INF: "", FOR: "", CERT: "" } },
-      },
+      { $set: set, $setOnInsert: { value: { INF:"", FOR:"", CERT:"" } } },
       { upsert: true }
     );
 
-    // devolver el estado final
-    const doc = await db
-      .collection("config")
-      .findOne({ key: "driveFolders" }, { projection: { _id: 0, value: 1 } });
-
-    res.json(doc?.value || { INF: "", FOR: "", CERT: "" });
+    const doc = await db.collection("config").findOne(
+      { key: "driveFolders" },
+      { projection: { _id: 0, value: 1 } }
+    );
+    res.json(doc?.value || { INF:"", FOR:"", CERT:"" });
   } catch (e) {
     console.error("[PUT /api/admin/drive-folders]", e);
     res.status(500).json({ message: "Error actualizando configuración" });
