@@ -16,7 +16,6 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(morgan("dev"));
 
-// CORS
 const allowed = ["https://faresbcs.com","https://www.faresbcs.com","http://localhost:5173"];
 app.use(cors({
   origin: (origin, cb) => cb(null, !origin || allowed.includes(origin)),
@@ -24,12 +23,11 @@ app.use(cors({
 }));
 app.options("*", cors());
 
-app.use(express.json());
-app.use(morgan("dev"));
-
 // Health
 app.get("/", (_req,res)=>res.status(200).send("OK"));
 app.get("/healthz", (_req,res)=>res.json({ ok:true }));
+app.use((err,_req,res,_next)=>{ console.error(err); res.status(500).json({message:"internal_error"}); });
+process.on("unhandledRejection", e=>console.error("unhandledRejection", e));
 
 const upload = multer({ dest: "uploads/" });
 
@@ -64,8 +62,8 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// ====== Drive folders en Mongo (sin fallback local) ======
-app.get("/api/admin/drive-folders", requireAdmin, async (req, res) => {
+// --- Drive folders en Mongo (sin validación contra Drive) ---
+app.get("/api/admin/drive-folders", requireAdmin, async (_req, res) => {
   const db = await connect();
   const doc = await db.collection("config").findOne({ key: "driveFolders" });
   res.json(doc?.value || { INF:"", FOR:"", CERT:"" });
@@ -74,18 +72,16 @@ app.get("/api/admin/drive-folders", requireAdmin, async (req, res) => {
 app.put("/api/admin/drive-folders", requireAdmin, async (req, res) => {
   try {
     const db = await connect();
-    const body = req.body || {};
-    const keys = ["INF","FOR","CERT"].filter(k =>
-      Object.prototype.hasOwnProperty.call(body, k)
-    );
-    if (keys.length === 0) return res.status(400).json({ message: "Nada para actualizar" });
-
-    const set = { updatedAt: new Date() };
-    for (const k of keys) set[`value.${k}`] = body[k] || "";
+    const b = req.body || {};
+    const setValue = {};
+    if (typeof b.INF  === "string") setValue["value.INF"]  = b.INF;
+    if (typeof b.FOR  === "string") setValue["value.FOR"]  = b.FOR;
+    if (typeof b.CERT === "string") setValue["value.CERT"] = b.CERT;
+    if (!Object.keys(setValue).length) return res.status(400).json({ message:"Nada para actualizar" });
 
     await db.collection("config").updateOne(
       { key: "driveFolders" },
-      { $set: set, $setOnInsert: { value: { INF:"", FOR:"", CERT:"" } } },
+      { $set: { ...setValue, updatedAt: new Date() }, $setOnInsert: { value: { INF:"", FOR:"", CERT:"" } } },
       { upsert: true }
     );
 
@@ -95,8 +91,8 @@ app.put("/api/admin/drive-folders", requireAdmin, async (req, res) => {
     );
     res.json(doc?.value || { INF:"", FOR:"", CERT:"" });
   } catch (e) {
-    console.error("[PUT /api/admin/drive-folders]", e);
-    res.status(500).json({ message: "Error actualizando configuración" });
+    console.error("[PUT drive-folders ERR]", e?.stack || e);
+    res.status(500).json({ message:"db_error" });
   }
 });
 
