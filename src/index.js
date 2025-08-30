@@ -56,25 +56,27 @@ app.put("/api/admin/drive-folders", requireAdmin, async (req, res) => {
     const body = req.body || {};
 
     // actualiza solo claves presentes
-    const keys = ["INF","FOR","CERT"].filter(k =>
+    const keys = ["INF", "FOR", "CERT"].filter((k) =>
       Object.prototype.hasOwnProperty.call(body, k)
     );
-    if (keys.length === 0) return res.status(400).json({ message: "Nada para actualizar" });
+    if (keys.length === 0)
+      return res.status(400).json({ message: "Nada para actualizar" });
 
     const set = { updatedAt: new Date() };
     for (const k of keys) set[`value.${k}`] = body[k] || "";
 
-    await db.collection("config").updateOne(
-      { key: "driveFolders" },
-      { $set: set, $setOnInsert: { value: { INF:"", FOR:"", CERT:"" } } },
-      { upsert: true }
-    );
+    await db
+      .collection("config")
+      .updateOne(
+        { key: "driveFolders" },
+        { $set: set, $setOnInsert: { value: { INF: "", FOR: "", CERT: "" } } },
+        { upsert: true }
+      );
 
-    const doc = await db.collection("config").findOne(
-      { key: "driveFolders" },
-      { projection: { _id: 0, value: 1 } }
-    );
-    res.json(doc?.value || { INF:"", FOR:"", CERT:"" });
+    const doc = await db
+      .collection("config")
+      .findOne({ key: "driveFolders" }, { projection: { _id: 0, value: 1 } });
+    res.json(doc?.value || { INF: "", FOR: "", CERT: "" });
   } catch (e) {
     console.error("[PUT /api/admin/drive-folders]", e);
     res.status(500).json({ message: "Error actualizando configuración" });
@@ -247,9 +249,6 @@ app.post(
       empresa,
       assignedUsers: assigned,
       resultado = "CUMPLE",
-      folderINF,
-      folderFOR,
-      folderCERT,
     } = req.body || {};
 
     const assignedUsers = Array.isArray(assigned)
@@ -259,11 +258,9 @@ app.post(
           .filter(Boolean);
 
     if (!numCert || !serial || !empresa || assignedUsers.length === 0) {
-      return res
-        .status(400)
-        .json({
-          message: "Campos requeridos: numCert, serial, empresa, assignedUsers",
-        });
+      return res.status(400).json({
+        message: "Campos requeridos: numCert, serial, empresa, assignedUsers",
+      });
     }
 
     const db = await connect();
@@ -275,12 +272,10 @@ app.post(
       users.length !== assignedUsers.length ||
       users.some((u) => u.empresa !== empresa)
     ) {
-      return res
-        .status(400)
-        .json({
-          message:
-            "Los usuarios asignados deben existir y pertenecer a la Empresa seleccionada",
-        });
+      return res.status(400).json({
+        message:
+          "Los usuarios asignados deben existir y pertenecer a la Empresa seleccionada",
+      });
     }
 
     const meta = {
@@ -299,17 +294,14 @@ app.post(
       .findOne({ key: "driveFolders" });
     const cfg = dbCfg?.value || {};
     const folderInf =
-      folderINF ||
       cfg.INF ||
       process.env.DRIVE_FOLDER_INF ||
       process.env.DRIVE_PARENT_FOLDER_ID;
     const folderFor =
-      folderFOR ||
       cfg.FOR ||
       process.env.DRIVE_FOLDER_FOR ||
       process.env.DRIVE_PARENT_FOLDER_ID;
     const folderCert =
-      folderCERT ||
       cfg.CERT ||
       process.env.DRIVE_FOLDER_CERT ||
       process.env.DRIVE_PARENT_FOLDER_ID;
@@ -440,12 +432,10 @@ app.put(
         users.length !== effectiveUsers.length ||
         users.some((u) => u.empresa !== effectiveEmpresa)
       ) {
-        return res
-          .status(400)
-          .json({
-            message:
-              "Los usuarios asignados deben existir y pertenecer a la Empresa seleccionada",
-          });
+        return res.status(400).json({
+          message:
+            "Los usuarios asignados deben existir y pertenecer a la Empresa seleccionada",
+        });
       }
     }
 
