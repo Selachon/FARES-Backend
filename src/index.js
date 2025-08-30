@@ -16,6 +16,21 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(morgan("dev"));
 
+// CORS
+const allowed = ["https://faresbcs.com","https://www.faresbcs.com","http://localhost:5173"];
+app.use(cors({
+  origin: (origin, cb) => cb(null, !origin || allowed.includes(origin)),
+  credentials: true
+}));
+app.options("*", cors());
+
+app.use(express.json());
+app.use(morgan("dev"));
+
+// Health
+app.get("/", (_req,res)=>res.status(200).send("OK"));
+app.get("/healthz", (_req,res)=>res.json({ ok:true }));
+
 const upload = multer({ dest: "uploads/" });
 
 // ====== OAuth2 (usuario tuyo con refresh_token) ======
@@ -49,39 +64,42 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// ✅ MANTENER ESTAS (Mongo) — usan requireAdmin y guardan en collection "config"
+// ====== Drive folders en Mongo (sin fallback local) ======
+app.get("/api/admin/drive-folders", requireAdmin, async (req, res) => {
+  const db = await connect();
+  const doc = await db.collection("config").findOne({ key: "driveFolders" });
+  res.json(doc?.value || { INF:"", FOR:"", CERT:"" });
+});
+
 app.put("/api/admin/drive-folders", requireAdmin, async (req, res) => {
   try {
     const db = await connect();
     const body = req.body || {};
-
-    // actualiza solo claves presentes
-    const keys = ["INF", "FOR", "CERT"].filter((k) =>
+    const keys = ["INF","FOR","CERT"].filter(k =>
       Object.prototype.hasOwnProperty.call(body, k)
     );
-    if (keys.length === 0)
-      return res.status(400).json({ message: "Nada para actualizar" });
+    if (keys.length === 0) return res.status(400).json({ message: "Nada para actualizar" });
 
     const set = { updatedAt: new Date() };
     for (const k of keys) set[`value.${k}`] = body[k] || "";
 
-    await db
-      .collection("config")
-      .updateOne(
-        { key: "driveFolders" },
-        { $set: set, $setOnInsert: { value: { INF: "", FOR: "", CERT: "" } } },
-        { upsert: true }
-      );
+    await db.collection("config").updateOne(
+      { key: "driveFolders" },
+      { $set: set, $setOnInsert: { value: { INF:"", FOR:"", CERT:"" } } },
+      { upsert: true }
+    );
 
-    const doc = await db
-      .collection("config")
-      .findOne({ key: "driveFolders" }, { projection: { _id: 0, value: 1 } });
-    res.json(doc?.value || { INF: "", FOR: "", CERT: "" });
+    const doc = await db.collection("config").findOne(
+      { key: "driveFolders" },
+      { projection: { _id: 0, value: 1 } }
+    );
+    res.json(doc?.value || { INF:"", FOR:"", CERT:"" });
   } catch (e) {
     console.error("[PUT /api/admin/drive-folders]", e);
     res.status(500).json({ message: "Error actualizando configuración" });
   }
 });
+
 
 app.get("/api/drive/fileinfo", requireAdmin, async (req, res) => {
   const id = req.query.id;
@@ -612,6 +630,12 @@ app.put(
     res.json({ ok: true });
   }
 );
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ message: "internal_error" });
+});
+process.on("unhandledRejection", e => console.error("unhandledRejection", e));
 
 const port = process.env.PORT || 4000;
 app.listen(port, () =>
