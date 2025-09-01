@@ -26,7 +26,7 @@ app.options("*", cors());
 // Health
 app.get("/", (_req,res)=>res.status(200).send("OK"));
 app.get("/healthz", (_req,res)=>res.json({ ok:true }));
-app.use((err,_req,res,_next)=>{ console.error(err); res.status(500).json({message:"internal_error"}); });
+app.use((err,_req,res,_next)=>{ console.error(err); res.status(500).json({ message:"internal_error" }); });
 process.on("unhandledRejection", e=>console.error("unhandledRejection", e));
 
 const upload = multer({ dest: "uploads/" });
@@ -62,7 +62,9 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// --- Drive folders en Mongo (sin validación contra Drive) ---
+// === Persistencia simple de carpetas en Mongo ===
+// Estructura en Mongo: { key:"driveFolders", value:{ INF, FOR, CERT }, updatedAt }
+
 app.get("/api/admin/drive-folders", requireAdmin, async (_req, res) => {
   const db = await connect();
   const doc = await db.collection("config").findOne({ key: "driveFolders" });
@@ -73,15 +75,19 @@ app.put("/api/admin/drive-folders", requireAdmin, async (req, res) => {
   try {
     const db = await connect();
     const b = req.body || {};
-    const setValue = {};
-    if (typeof b.INF  === "string") setValue["value.INF"]  = b.INF;
-    if (typeof b.FOR  === "string") setValue["value.FOR"]  = b.FOR;
-    if (typeof b.CERT === "string") setValue["value.CERT"] = b.CERT;
-    if (!Object.keys(setValue).length) return res.status(400).json({ message:"Nada para actualizar" });
+
+    // permite update parcial o total
+    const set = { updatedAt: new Date() };
+    if (typeof b.INF  === "string") set["value.INF"]  = b.INF;
+    if (typeof b.FOR  === "string") set["value.FOR"]  = b.FOR;
+    if (typeof b.CERT === "string") set["value.CERT"] = b.CERT;
+    if (Object.keys(set).length === 1) {
+      return res.status(400).json({ message: "Nada para actualizar" });
+    }
 
     await db.collection("config").updateOne(
       { key: "driveFolders" },
-      { $set: { ...setValue, updatedAt: new Date() }, $setOnInsert: { value: { INF:"", FOR:"", CERT:"" } } },
+      { $set: set, $setOnInsert: { value: { INF:"", FOR:"", CERT:"" } } },
       { upsert: true }
     );
 
@@ -91,11 +97,10 @@ app.put("/api/admin/drive-folders", requireAdmin, async (req, res) => {
     );
     res.json(doc?.value || { INF:"", FOR:"", CERT:"" });
   } catch (e) {
-    console.error("[PUT drive-folders ERR]", e?.stack || e);
-    res.status(500).json({ message:"db_error" });
+    console.error("[PUT /api/admin/drive-folders]", e);
+    res.status(500).json({ message: "db_error" });
   }
 });
-
 
 app.get("/api/drive/fileinfo", requireAdmin, async (req, res) => {
   const id = req.query.id;
