@@ -73,34 +73,37 @@ app.get("/api/admin/drive-folders", requireAdmin, async (_req, res) => {
 
 app.put("/api/admin/drive-folders", requireAdmin, async (req, res) => {
   try {
+    const body = req.body || {};
     const db = await connect();
-    const b = req.body || {};
 
-    // permite update parcial o total
-    const set = { updatedAt: new Date() };
-    if (typeof b.INF  === "string") set["value.INF"]  = b.INF;
-    if (typeof b.FOR  === "string") set["value.FOR"]  = b.FOR;
-    if (typeof b.CERT === "string") set["value.CERT"] = b.CERT;
-    if (Object.keys(set).length === 1) {
-      return res.status(400).json({ message: "Nada para actualizar" });
+    // construye $set sólo con campos válidos
+    const set = { key: "driveFolders", updatedAt: new Date() };
+    ["INF", "FOR", "CERT"].forEach((k) => {
+      if (typeof body[k] === "string") set[`value.${k}`] = body[k] || "";
+    });
+    if (!Object.keys(set).some((k) => k.startsWith("value."))) {
+      return res.status(400).json({ message: "Nada que actualizar" });
     }
 
     await db.collection("config").updateOne(
       { key: "driveFolders" },
-      { $set: set, $setOnInsert: { value: { INF:"", FOR:"", CERT:"" } } },
+      { $set: set, $setOnInsert: { value: { INF: "", FOR: "", CERT: "" } } },
       { upsert: true }
     );
 
-    const doc = await db.collection("config").findOne(
-      { key: "driveFolders" },
-      { projection: { _id: 0, value: 1 } }
-    );
-    res.json(doc?.value || { INF:"", FOR:"", CERT:"" });
+    const doc = await db
+      .collection("config")
+      .findOne({ key: "driveFolders" }, { projection: { _id: 0, value: 1 } });
+
+    return res.json(doc?.value || { INF: "", FOR: "", CERT: "" });
   } catch (e) {
-    console.error("[PUT /api/admin/drive-folders]", e);
-    res.status(500).json({ message: "db_error" });
+    console.error("[PUT /api/admin/drive-folders] error:", e);
+    return res
+      .status(500)
+      .json({ message: "Fallo guardando carpetas", detail: String(e?.message || e) });
   }
 });
+
 
 app.get("/api/drive/fileinfo", requireAdmin, async (req, res) => {
   const id = req.query.id;
