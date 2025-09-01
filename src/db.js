@@ -17,11 +17,9 @@ export async function connect() {
 
 async function seed(db) {
   const users = db.collection("users");
+  const config = db.collection("config");
   // pone un objeto vacío estándar si 'value' no es objeto
-  db.config.updateOne(
-    { key: "driveFolders", $expr: { $ne: [{ $type: "$value" }, "object"] } },
-    { $set: { value: { INF: "", FOR: "", CERT: "" } } }
-  );
+  config.insertOne({ value: { INF: "", FOR: "", CERT: "" } });
 
   if ((await users.countDocuments()) === 0) {
     await users.insertMany([
