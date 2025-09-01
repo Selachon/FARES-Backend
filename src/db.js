@@ -17,9 +17,6 @@ export async function connect() {
 
 async function seed(db) {
   const users = db.collection("users");
-  const config = db.collection("config");
-  // pone un objeto vacío estándar si 'value' no es objeto
-  config.insertOne({ value: { INF: "", FOR: "", CERT: "" } });
 
   if ((await users.countDocuments()) === 0) {
     await users.insertMany([
