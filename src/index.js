@@ -73,29 +73,35 @@ app.get("/api/admin/drive-folders", requireAdmin, async (_req, res) => {
 
 app.put("/api/admin/drive-folders", requireAdmin, async (req, res) => {
   try {
-    const body = req.body || {};
+    const { INF, FOR, CERT } = req.body || {};
     const db = await connect();
 
-    // construye $set sólo con campos válidos
-    const set = { key: "driveFolders", updatedAt: new Date() };
-    ["INF", "FOR", "CERT"].forEach((k) => {
-      if (typeof body[k] === "string") set[`value.${k}`] = body[k] || "";
-    });
-    if (!Object.keys(set).some((k) => k.startsWith("value."))) {
-      return res.status(400).json({ message: "Nada que actualizar" });
-    }
+    // Lee lo actual (o .env como fallback)
+    const doc = await db.collection("config").findOne(
+      { key: "driveFolders" },
+      { projection: { _id: 0, value: 1 } }
+    );
+    const current = doc?.value || {
+      INF: process.env.DRIVE_FOLDER_INF || "",
+      FOR: process.env.DRIVE_FOLDER_FOR || "",
+      CERT: process.env.DRIVE_FOLDER_CERT || "",
+    };
 
+    // Fusiona sólo los campos enviados
+    const merged = {
+      INF: typeof INF === "string" ? INF : current.INF,
+      FOR: typeof FOR === "string" ? FOR : current.FOR,
+      CERT: typeof CERT === "string" ? CERT : current.CERT,
+    };
+
+    // Setea el objeto completo, sin rutas anidadas
     await db.collection("config").updateOne(
       { key: "driveFolders" },
-      { $set: set, $setOnInsert: { value: { INF: "", FOR: "", CERT: "" } } },
+      { $set: { key: "driveFolders", value: merged, updatedAt: new Date() } },
       { upsert: true }
     );
 
-    const doc = await db
-      .collection("config")
-      .findOne({ key: "driveFolders" }, { projection: { _id: 0, value: 1 } });
-
-    return res.json(doc?.value || { INF: "", FOR: "", CERT: "" });
+    return res.json(merged);
   } catch (e) {
     console.error("[PUT /api/admin/drive-folders] error:", e);
     return res
@@ -103,7 +109,6 @@ app.put("/api/admin/drive-folders", requireAdmin, async (req, res) => {
       .json({ message: "Fallo guardando carpetas", detail: String(e?.message || e) });
   }
 });
-
 
 app.get("/api/drive/fileinfo", requireAdmin, async (req, res) => {
   const id = req.query.id;
