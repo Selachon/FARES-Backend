@@ -6,12 +6,6 @@ let client, db;
 
 export async function connect() {
   if (db) return db;
-  if (inMemory) {
-    db = {
-      collection: (n) => memCollection(n),
-    };
-    return db;
-  }
 
   const uri = process.env.MONGODB_URI;
   client = new MongoClient(uri, { serverSelectionTimeoutMS: 8000 });
