@@ -1,48 +1,56 @@
+// get-token.js
 import { google } from "googleapis";
-import readline from "readline";
+import http from "http";
 import dotenv from "dotenv";
 dotenv.config();
 
-// Carga los datos de tu .env
 const CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-const REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob"; // flujo sin servidor web
+const REDIRECT_URI = "http://localhost:3007/oauth2/callback";
+const SCOPES = ["https://www.googleapis.com/auth/drive"]; // scope amplio y estable
 
-// Crea el cliente OAuth2
 const oAuth2Client = new google.auth.OAuth2(
   CLIENT_ID,
   CLIENT_SECRET,
   REDIRECT_URI
 );
 
-// Permisos para subir a Drive
-const SCOPES = ["https://www.googleapis.com/auth/drive"];
-
-// Paso 1: Generar la URL de autenticación
+// 1) Muestra la URL para autorizar
 const authUrl = oAuth2Client.generateAuthUrl({
   access_type: "offline",
+  prompt: "consent",
   scope: SCOPES,
-  prompt: "consent", // para forzar refresh_token
 });
-
-console.log("\n🌐 Autoriza esta app visitando este enlace:\n");
+console.log("\nAutoriza visitando este enlace:\n");
 console.log(authUrl);
-console.log("\nLuego pega aquí el código que te dé Google:\n");
 
-// Paso 2: Leer el código que devuelve Google
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-rl.question("Código: ", async (code) => {
-  try {
-    const { tokens } = await oAuth2Client.getToken(code);
-    console.log("\n✅ Tokens obtenidos:");
-    console.log(tokens);
-    console.log("\n📌 Guarda el `refresh_token` en tu .env como:");
-    console.log(`GOOGLE_OAUTH_REFRESH_TOKEN=${tokens.refresh_token}`);
-  } catch (err) {
-    console.error("❌ Error obteniendo el token:", err);
+// 2) Servidor local para recibir el code y canjear tokens
+const server = http.createServer(async (req, res) => {
+  if (req.url.startsWith("/oauth2/callback")) {
+    const url = new URL(req.url, REDIRECT_URI);
+    const code = url.searchParams.get("code");
+    try {
+      const { tokens } = await oAuth2Client.getToken(code);
+      console.log("\nTokens obtenidos:");
+      console.log(tokens);
+      console.log(
+        `\nGuarda en tu .env:\nGOOGLE_OAUTH_REFRESH_TOKEN=${tokens.refresh_token}\n`
+      );
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("OK. Revisa la consola y copia el refresh_token. Puedes cerrar esta pestaña.");
+    } catch (e) {
+      console.error("Error canjeando código:", e);
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("Error. Revisa la consola.");
+    } finally {
+      server.close();
+    }
+    return;
   }
-  rl.close();
+  res.writeHead(404);
+  res.end();
 });
+
+server.listen(3007, () =>
+  console.log("Esperando callback en http://localhost:3007/oauth2/callback")
+);
