@@ -11,12 +11,40 @@ import { connect } from "./db.js";
 import bcrypt from "bcryptjs";
 dotenv.config();
 
+// ====== Local Dev (pruebas completas) ======
+const IS_LOCAL =
+  process.env.LOCAL_DEV === "1" ||
+  process.env.NODE_ENV !== "production" ||
+  String(process.env.RENDER || "").toLowerCase() !== "true";
+
+const LOCAL_FRONTEND_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
+
 const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(morgan("dev"));
 
-const allowed = ["https://faresbcs.com","https://www.faresbcs.com","http://localhost:5173"];
+const allowed = [
+  "https://faresbcs.com",
+  "https://www.faresbcs.com",
+  "http://localhost:5173",
+  ...(IS_LOCAL ? LOCAL_FRONTEND_ORIGINS : []),
+];
+
+if (IS_LOCAL) {
+  app.use((req, _res, next) => {
+    const origin = req.headers.origin;
+    if (origin && !allowed.includes(origin)) {
+      console.log("[CORS][BLOCKED]", origin, req.method, req.url);
+      console.log("[CORS][ALLOWED]", allowed);
+    }
+    next();
+  });
+}
+
 app.use(cors({
   origin: (origin, cb) => cb(null, !origin || allowed.includes(origin)),
   credentials: true
@@ -646,7 +674,12 @@ app.use((err, _req, res, _next) => {
 });
 process.on("unhandledRejection", e => console.error("unhandledRejection", e));
 
-const port = process.env.PORT || 4000;
-app.listen(port, () =>
-  console.log(`API running on https://fares-backend.onrender.com/api`)
-);
+const port = process.env.PORT || 3001;
+app.listen(port, () => {
+  const base = `http://localhost:${port}`;
+  console.log(
+    IS_LOCAL
+      ? `API running (LOCAL) on ${base}  (frontend expected: http://localhost:5173)`
+      : `API running (PROD) on https://fares-backend.onrender.com/api`
+  );
+});
