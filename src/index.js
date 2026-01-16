@@ -475,24 +475,36 @@ app.put(
       updates.assignedUsers = assignedUsers;
     }
 
-    // Validación empresa/usuarios si cambian
-    const effectiveEmpresa = updates.empresa ?? existing.empresa;
+    // --- INICIO PARCHE DE VALIDACIÓN ---
+    const effectiveEmpresa = (updates.empresa ?? existing.empresa)?.trim();
     const effectiveUsers = updates.assignedUsers ?? existing.assignedUsers;
-    if (effectiveUsers) {
-      const users = await db
+
+    if (effectiveUsers && effectiveUsers.length > 0) {
+      const usersInDb = await db
         .collection("users")
         .find({ username: { $in: effectiveUsers } })
         .toArray();
-      if (
-        users.length !== effectiveUsers.length ||
-        users.some((u) => u.empresa !== effectiveEmpresa)
-      ) {
+
+      // Normalizamos la empresa a comparar para evitar errores de Case Sensitivity
+      const empresaTarget = effectiveEmpresa.toUpperCase();
+
+      const hasInvalidUser = usersInDb.some((u) => {
+        const userEmpresa = (u.empresa || "").trim().toUpperCase();
+        return userEmpresa !== empresaTarget;
+      });
+
+      if (usersInDb.length !== effectiveUsers.length || hasInvalidUser) {
+        // Log para debug en Render (opcional, puedes quitarlo después)
+        console.log(`[VALIDATION_ERROR] Empresa: ${empresaTarget}`);
+        console.log(`Usuarios encontrados: ${usersInDb.length}/${effectiveUsers.length}`);
+        
         return res.status(400).json({
-          message:
-            "Los usuarios asignados deben existir y pertenecer a la Empresa seleccionada",
+          message: "Los usuarios asignados deben existir y pertenecer a la Empresa seleccionada",
+          detail: "Verifique que el nombre de la empresa en el perfil del usuario coincida exactamente."
         });
       }
     }
+    // --- FIN PARCHE DE VALIDACIÓN ---
 
     // Reemplazo de archivos (opcional)
     const files = req.files || {};
