@@ -9,6 +9,7 @@ import fs from "node:fs";
 import { ObjectId } from "mongodb";
 import { connect } from "./db.js";
 import bcrypt from "bcryptjs";
+import nodemailer from "nodemailer";
 dotenv.config();
 
 // ====== Local Dev (pruebas completas) ======
@@ -51,6 +52,38 @@ app.use(cors({
 }));
 app.options("*", cors());
 
+// --- INICIO: Configuración de correo (Nodemailer) ---
+const EMAIL_HOST = process.env.EMAIL_HOST; // ej: "mail.faresbcs.com"
+const EMAIL_PORT = Number(process.env.EMAIL_PORT || 465); // 465 o 587
+const EMAIL_SECURE = (process.env.EMAIL_SECURE || "true") === "true"; // true si usa 465
+const EMAIL_USER = process.env.EMAIL_USER; // ej: "no-reply@faresbcs.com"
+const EMAIL_PASS = process.env.EMAIL_PASS;
+const EMAIL_FROM = process.env.EMAIL_FROM || EMAIL_USER; // remitente visto
+const EMAIL_TO = process.env.EMAIL_TO || EMAIL_USER; // destino por defecto (puede ser lista separada por comas)
+
+let mailer;
+if (EMAIL_HOST && EMAIL_USER && EMAIL_PASS) {
+  mailer = nodemailer.createTransport({
+    host: EMAIL_HOST,
+    port: EMAIL_PORT,
+    secure: EMAIL_SECURE,
+    auth: {
+      user: EMAIL_USER,
+      pass: EMAIL_PASS,
+    },
+  });
+
+  // Verificar transporte al arrancar (log de verificación, no detiene ejecución)
+  mailer.verify().then(() => {
+    console.log("[MAIL] Transporter verificado");
+  }).catch((e) => {
+    console.warn("[MAIL] No se pudo verificar transporter:", e?.message || e);
+  });
+} else {
+  console.warn("[MAIL] Variables de entorno de correo incompletas. Endpoint /api/contact no funcionará hasta configurarlas.");
+}
+// --- FIN: Configuración de correo ---
+
 // Health
 app.get("/", (_req,res)=>res.status(200).send("OK"));
 app.get("/healthz", (_req,res)=>res.json({ ok:true }));
@@ -58,6 +91,57 @@ app.use((err,_req,res,_next)=>{ console.error(err); res.status(500).json({ messa
 process.on("unhandledRejection", e=>console.error("unhandledRejection", e));
 
 const upload = multer({ dest: "uploads/" });
+
+// Endpoint para recibir formularios de contacto (público)
+app.post("/api/contact", async (req, res) => {
+  try {
+    if (!mailer) {
+      return res.status(500).json({ ok: false, message: "Mail service not configured" });
+    }
+
+    const { nombre, email, asunto, mensaje, telefono = "" } = req.body || {};
+
+    // Validación mínima
+    if (!nombre || !email || !mensaje) {
+      return res.status(400).json({ ok: false, message: "Campos requeridos: nombre, email, mensaje" });
+    }
+
+    const subject = asunto ? `Contacto web - ${asunto}` : "Contacto web - Nuevo mensaje";
+    const html = `
+      <h3>Mensaje desde formulario web</h3>
+      <p><b>Nombre:</b> ${escapeHtml(String(nombre))}</p>
+      <p><b>Email:</b> ${escapeHtml(String(email))}</p>
+      ${telefono ? `<p><b>Teléfono:</b> ${escapeHtml(String(telefono))}</p>` : ""}
+      <hr/>
+      <p>${escapeHtml(String(mensaje)).replace(/\n/g, "<br/>")}</p>
+    `;
+
+    const info = await mailer.sendMail({
+      from: `"FARES Web" <${EMAIL_FROM}>`,
+      to: EMAIL_TO, // puede ser una lista: "ops@faresbcs.com,info@faresbcs.com"
+      replyTo: email,
+      subject,
+      text: `${nombre} (${email})\n\n${mensaje}`,
+      html,
+    });
+
+    console.log("[MAIL] Contact sent:", info.messageId);
+    res.json({ ok: true, message: "Correo enviado" });
+  } catch (e) {
+    console.error("[/api/contact] Error enviando correo:", e);
+    res.status(500).json({ ok: false, message: "Error enviando correo" });
+  }
+});
+
+// Helper simple para escapar HTML en los campos
+function escapeHtml(str = "") {
+  return str
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
 
 // ====== OAuth2 (usuario tuyo con refresh_token) ======
 const oauth2 = new google.auth.OAuth2(
