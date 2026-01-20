@@ -1,102 +1,34 @@
 // src/emailService.js
-import nodemailer from "nodemailer";
 import { config } from "./config.js";
 import { logger, validateEmail, escapeHtml } from "./utils.js";
 
-function redactSecrets(str) {
-  if (!str) return str;
-  return String(str).slice(0, 4) + "****";
-}
-
 class EmailService {
   constructor() {
-    this.transporter = null;
     this.lastVerify = { ok: false, at: null, error: null };
-    this.init();
-  }
-
-  init() {
-    const email = config.email;
-
-    // Validación de config mínima
-    if (!email?.host || !email?.port || !email?.user || !email?.pass) {
-      logger.warn("Email service not configured - missing env vars", {
-        host: email?.host,
-        port: email?.port,
-        user: email?.user ? redactSecrets(email.user) : null,
-        hasPass: Boolean(email?.pass),
-      });
-      return;
-    }
-
-    // Normalización defensiva (por si algo llega como string)
-    const port = Number(email.port);
-    const secure = Boolean(email.secure);
-
-    this.transporter = nodemailer.createTransport({
-      host: email.host,
-      port,
-      secure, // true sólo si 465 (SSL directo)
-      auth: {
-        user: email.user,
-        pass: email.pass,
-      },
-
-      // STARTTLS explícito para 587 (Brevo)
-      requireTLS: port === 587,
-
-      tls: {
-        servername: email.host,
-        minVersion: "TLSv1.2",
-      },
-
-      // Timeouts claros (si hay bloqueo/red, falla rápido y deja rastro)
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 20000,
-    });
-
-    // Verificación no bloqueante (no tumba servidor)
-    this.verify().catch(() => {});
   }
 
   isConfigured() {
-    return Boolean(this.transporter);
+    return Boolean(config?.email?.brevoApiKey && config?.email?.from && config?.email?.to);
   }
 
   async verify() {
-    if (!this.transporter) return { ok: false, error: "not_configured" };
+    // Verificación ligera: solo confirma que tenemos lo necesario.
+    // (Brevo no tiene un "verify connection" como SMTP)
+    const ok = this.isConfigured();
+    this.lastVerify = {
+      ok,
+      at: new Date().toISOString(),
+      error: ok ? null : "Missing BREVO_API_KEY / EMAIL_FROM / EMAIL_TO",
+    };
 
-    try {
-      await this.transporter.verify();
-      this.lastVerify = { ok: true, at: new Date().toISOString(), error: null };
-      logger.info("Email transporter verified", { at: this.lastVerify.at });
-      return { ok: true };
-    } catch (error) {
-      const details = {
-        message: error?.message,
-        code: error?.code,
-        command: error?.command,
-        errno: error?.errno,
-        syscall: error?.syscall,
-        address: error?.address,
-        port: error?.port,
-        response: error?.response,
-        responseCode: error?.responseCode,
-      };
-
-      this.lastVerify = {
-        ok: false,
-        at: new Date().toISOString(),
-        error: details,
-      };
-
-      logger.warn("Email transporter verification failed", details);
-      return { ok: false, error: details };
+    if (!ok) {
+      logger.warn("Brevo email service not configured", this.lastVerify);
+    } else {
+      logger.info("Brevo email service configured", { at: this.lastVerify.at });
     }
+    return { ok, error: ok ? null : this.lastVerify.error };
   }
 
-  // Construye HTML seguro
   buildContactHtml({ nombre, email, telefono, mensaje }) {
     return `
       <h3>Mensaje desde formulario web</h3>
@@ -109,7 +41,7 @@ class EmailService {
   }
 
   async sendContactEmail({ nombre, email, asunto, mensaje, telefono = "" }) {
-    if (!this.transporter) {
+    if (!this.isConfigured()) {
       throw new Error("Mail service not configured");
     }
 
@@ -121,13 +53,7 @@ class EmailService {
       throw new Error("Email inválido");
     }
 
-    // From fijo del dominio (mejor entregabilidad), Reply-To el usuario
-    const from = config.email.from;
-    const to = config.email.to;
-
-    const subject = asunto
-      ? `Contacto web - ${asunto}`
-      : "Contacto web - Nuevo mensaje";
+    const subject = asunto ? `Contacto web - ${asunto}` : "Contacto web - Nuevo mensaje";
 
     const text = [
       `${nombre} (${email})`,
@@ -140,36 +66,44 @@ class EmailService {
 
     const html = this.buildContactHtml({ nombre, email, telefono, mensaje });
 
+    // Payload Brevo API v3 (send transactional email)
+    const payload = {
+      sender: { name: "FARES Web", email: config.email.from },
+      to: [{ email: config.email.to }],
+      replyTo: { email }, // para responder al usuario
+      subject,
+      textContent: text,
+      htmlContent: html,
+      headers: {
+        "X-FARES-Form": "contact",
+      },
+    };
+
     try {
-      const info = await this.transporter.sendMail({
-        from: `"FARES Web" <${from}>`,
-        to,
-        replyTo: email,
-        subject,
-        text,
-        html,
-
-        // Opcional: ayuda a clasificar / rastrear
+      const resp = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
         headers: {
-          "X-FARES-Form": "contact",
+          "api-key": config.email.brevoApiKey,
+          "content-type": "application/json",
+          accept: "application/json",
         },
+        body: JSON.stringify(payload),
       });
 
-      logger.info("Contact email sent successfully", {
-        messageId: info.messageId,
-        accepted: info.accepted,
-        rejected: info.rejected,
-      });
+      const data = await resp.json().catch(() => ({}));
 
-      return { ok: true, messageId: info.messageId };
-    } catch (error) {
-      logger.error("Failed to send contact email", {
-        message: error?.message,
-        code: error?.code,
-        command: error?.command,
-        response: error?.response,
-        responseCode: error?.responseCode,
-      });
+      if (!resp.ok) {
+        logger.error("Brevo send failed", {
+          status: resp.status,
+          data,
+        });
+        throw new Error("Error enviando correo");
+      }
+
+      logger.info("Brevo email sent", { messageId: data?.messageId });
+      return { ok: true, messageId: data?.messageId || null };
+    } catch (err) {
+      logger.error("Brevo send exception", { message: err?.message });
       throw new Error("Error enviando correo");
     }
   }

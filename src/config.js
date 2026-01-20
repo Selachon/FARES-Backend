@@ -62,6 +62,7 @@ export const config = {
     // Remitente y destinatario
     from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
     to: process.env.EMAIL_TO || process.env.EMAIL_USER,
+    brevoApiKey: process.env.BREVO_API_KEY,
   },
 
   // Configuración de APIs de Google

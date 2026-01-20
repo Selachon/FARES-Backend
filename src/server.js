@@ -63,6 +63,26 @@ app.get("/email/verify", async (req, res) => {
   }
 });
 
+app.post("/email/test-send", async (req, res) => {
+  try {
+    const result = await emailService.sendContactEmail({
+      nombre: "Test Render",
+      email: "test@faresbcs.com",
+      asunto: "Prueba Brevo API",
+      mensaje: "Este es un correo de prueba enviado desde Render vía Brevo API.",
+      telefono: "",
+    });
+
+    return res.json({ ok: true, result });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      error: err.message || "Unknown error",
+    });
+  }
+});
+
+
 // Middleware para manejo de errores (deben ir al final)
 app.use(notFoundHandler); // Para rutas no encontradas (404)
 app.use(errorHandler);    // Para errores generales (500)
