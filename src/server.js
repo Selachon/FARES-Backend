@@ -12,6 +12,7 @@ import {
   healthMiddleware 
 } from "./middleware.js";
 import apiRoutes from "./routes/api.js";
+import { emailService } from "./emailService.js";
 
 // Creación de la aplicación Express
 const app = express();
@@ -40,6 +41,31 @@ app.use("/api", apiRoutes);
 // Middleware para manejo de errores (deben ir al final)
 app.use(notFoundHandler); // Para rutas no encontradas (404)
 app.use(errorHandler);    // Para errores generales (500)
+
+// Endpoint TEMPORAL para verificar SMTP
+app.get("/email/verify", async (req, res) => {
+  try {
+    if (!emailService.isConfigured()) {
+      return res.status(500).json({
+        ok: false,
+        error: "Email service not configured",
+      });
+    }
+
+    const result = await emailService.verify();
+
+    return res.json({
+      ok: result.ok,
+      verifiedAt: new Date().toISOString(),
+      details: result.error || null,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      error: err.message || "Unknown error",
+    });
+  }
+});
 
 // Manejo de rechazos de promesas no manejados
 process.on("unhandledRejection", (reason, promise) => {
