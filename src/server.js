@@ -38,10 +38,6 @@ app.get("/healthz", healthMiddleware);              // Health check detallado
 // Monta rutas de la API bajo prefijo /api
 app.use("/api", apiRoutes);
 
-// Middleware para manejo de errores (deben ir al final)
-app.use(notFoundHandler); // Para rutas no encontradas (404)
-app.use(errorHandler);    // Para errores generales (500)
-
 // Endpoint TEMPORAL para verificar SMTP
 app.get("/email/verify", async (req, res) => {
   try {
@@ -51,9 +47,9 @@ app.get("/email/verify", async (req, res) => {
         error: "Email service not configured",
       });
     }
-
+    
     const result = await emailService.verify();
-
+    
     return res.json({
       ok: result.ok,
       verifiedAt: new Date().toISOString(),
@@ -66,6 +62,10 @@ app.get("/email/verify", async (req, res) => {
     });
   }
 });
+
+// Middleware para manejo de errores (deben ir al final)
+app.use(notFoundHandler); // Para rutas no encontradas (404)
+app.use(errorHandler);    // Para errores generales (500)
 
 // Manejo de rechazos de promesas no manejados
 process.on("unhandledRejection", (reason, promise) => {
