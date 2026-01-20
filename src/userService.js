@@ -40,7 +40,6 @@ class UserService {
       throw createError("Error obteniendo usuarios", 500);
     }
   }
-  }
 
   // Autentica usuario contra base de datos
   async authenticateUser(username, password) {

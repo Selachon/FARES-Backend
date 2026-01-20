@@ -175,5 +175,3 @@ class DriveService {
 
 // Exporta instancia única del servicio (singleton)
 export const driveService = new DriveService();
-
-export const driveService = new DriveService();

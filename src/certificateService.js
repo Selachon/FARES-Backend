@@ -38,7 +38,6 @@ class CertificateService {
       throw createError("Error obteniendo certificados", 500);
     }
   }
-  }
 
   // Crea nuevo certificado con archivos adjuntos
   async createCertificate(certificateData, files) {
@@ -114,7 +113,6 @@ class CertificateService {
       logger.error("Failed to create certificate", error);
       throw createError("Error creando certificado", 500);
     }
-  }
   }
 
   async updateCertificate(id, updateData, files) {

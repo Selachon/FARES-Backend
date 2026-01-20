@@ -87,7 +87,6 @@ class EmailService {
       throw new Error("Error enviando correo");
     }
   }
-  }
 
   async sendContactEmail({ nombre, email, asunto, mensaje, telefono = "" }) {
     if (!this.transporter) {
