@@ -12,7 +12,6 @@ import {
   healthMiddleware 
 } from "./middleware.js";
 import apiRoutes from "./routes/api.js";
-import { emailService } from "./emailService.js";
 
 // Creación de la aplicación Express
 const app = express();
@@ -37,51 +36,6 @@ app.get("/healthz", healthMiddleware);              // Health check detallado
 
 // Monta rutas de la API bajo prefijo /api
 app.use("/api", apiRoutes);
-
-// Endpoint TEMPORAL para verificar SMTP
-app.get("/email/verify", async (req, res) => {
-  try {
-    if (!emailService.isConfigured()) {
-      return res.status(500).json({
-        ok: false,
-        error: "Email service not configured",
-      });
-    }
-    
-    const result = await emailService.verify();
-    
-    return res.json({
-      ok: result.ok,
-      verifiedAt: new Date().toISOString(),
-      details: result.error || null,
-    });
-  } catch (err) {
-    return res.status(500).json({
-      ok: false,
-      error: err.message || "Unknown error",
-    });
-  }
-});
-
-app.post("/email/test-send", async (req, res) => {
-  try {
-    const result = await emailService.sendContactEmail({
-      nombre: "Test Render",
-      email: "test@faresbcs.com",
-      asunto: "Prueba Brevo API",
-      mensaje: "Este es un correo de prueba enviado desde Render vía Brevo API.",
-      telefono: "",
-    });
-
-    return res.json({ ok: true, result });
-  } catch (err) {
-    return res.status(500).json({
-      ok: false,
-      error: err.message || "Unknown error",
-    });
-  }
-});
-
 
 // Middleware para manejo de errores (deben ir al final)
 app.use(notFoundHandler); // Para rutas no encontradas (404)

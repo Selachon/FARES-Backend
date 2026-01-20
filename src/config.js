@@ -43,26 +43,30 @@ export const config = {
     },
   },
 
-  // Configuración del servicio de correo electrónico
+  // Configuración del servicio de correo electrónico (Brevo API v3)
   email: {
-    host: process.env.EMAIL_HOST,
+    host: process.env.EMAIL_HOST,                    // Servidor SMTP (legacy)
 
     // Puerto SMTP (587 por defecto para Brevo / STARTTLS)
     port: Number(process.env.EMAIL_PORT) || 587,
 
-    // secure SOLO true si el puerto es 465
+    // secure SOLO true si el puerto es 465 (SMTPS)
+    // Para puerto 587 con STARTTLS, secure debe ser false
     secure:
       process.env.EMAIL_SECURE !== undefined
         ? process.env.EMAIL_SECURE === "true"
         : Number(process.env.EMAIL_PORT) === 465,
 
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
+    user: process.env.EMAIL_USER,                    // Usuario SMTP (legacy)
+    pass: process.env.EMAIL_PASS,                    // Contraseña SMTP (legacy)
 
-    // Remitente y destinatario
-    from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-    to: process.env.EMAIL_TO || process.env.EMAIL_USER,
-    brevoApiKey: process.env.BREVO_API_KEY,
+    // Remitente y destinatario del correo
+    from: process.env.EMAIL_FROM || process.env.EMAIL_USER, // Email del remitente
+    to: process.env.EMAIL_TO || process.env.EMAIL_USER,     // Email del destinatario
+    
+    // API Key de Brevo (recomendado sobre SMTP)
+    // Se usa para comunicación directa con API REST v3
+    brevoApiKey: process.env.BREVO_API_KEY,             // Clave API de Brevo
   },
 
   // Configuración de APIs de Google
