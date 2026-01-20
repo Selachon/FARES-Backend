@@ -13,8 +13,8 @@ export const config = {
 
   // Configuración del servidor HTTP
   server: {
-    port: parseInt(process.env.PORT) || 3001, // Puerto del servidor
-    host: process.env.HOST || "localhost", // Host del servidor
+    port: parseInt(process.env.PORT) || 3000, // Puerto del servidor
+    host: process.env.HOST || "0.0.0.0", // Host del servidor
   },
 
   // Configuración de CORS para permitir solicitudes desde otros dominios
