@@ -1,4 +1,5 @@
 .env
+.env.local
 uploads/
 get-token.js
 node_modules/
