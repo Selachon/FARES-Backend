@@ -67,37 +67,47 @@ export const adminGuard = (req, res, next) => {
 
 // Middleware centralizado de manejo de errores
 export const errorHandler = (error, req, res, next) => {
-  // Registra el error en el monitor de rendimiento
+  const statusCode = error.statusCode || 500;
+  const code = error.code || "INTERNAL_ERROR";
+
+  // 4xx = errores esperados (cliente), 5xx = fallas reales del servidor
+  const isClientError = statusCode >= 400 && statusCode < 500;
+
+  // Track en performance (siempre), pero el log cambia de severidad
   performanceMonitor.trackError(error, req);
-  
-  // Registra información detallada del error para debugging
-  logger.error("Request error", {
+
+  const logPayload = {
     error: {
       message: error.message,
       stack: error.stack,
-      statusCode: error.statusCode,
-      code: error.code
+      statusCode,
+      code,
     },
     request: {
       method: req.method,
       url: req.url,
       body: req.body,
       params: req.params,
-      query: req.query
-    }
-  });
-  
-  // Determina el código de estado HTTP y código de error
-  const statusCode = error.statusCode || 500;
-  const code = error.code || "INTERNAL_ERROR";
-  
-  // En desarrollo muestra el error completo, en producción un mensaje genérico
-  const message = config.isLocal ? error.message : "Error interno del servidor";
-  
+      query: req.query,
+    },
+  };
+
+  if (isClientError) {
+    logger.warn("Request warning", logPayload);
+  } else {
+    logger.error("Request error", logPayload);
+  }
+
+  // Mensaje: en 4xx SIEMPRE entrega el mensaje real (producción incluida)
+  // En 5xx: en prod manda genérico, en local manda el real
+  const message = isClientError
+    ? error.message
+    : (config.isLocal ? error.message : "Error interno del servidor");
+
   res.status(statusCode).json({
     message,
     code,
-    ...(config.isLocal && { stack: error.stack }) // Stack trace solo en desarrollo
+    ...(config.isLocal && { stack: error.stack }),
   });
 };
 
