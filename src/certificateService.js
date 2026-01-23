@@ -231,7 +231,6 @@ class CertificateService {
         updates.status = computed.computedStatus;
       }
 
-
       await db.collection("certificates").updateOne({ _id }, { $set: updates });
 
       const updated = await db.collection("certificates").findOne({ _id });
@@ -346,21 +345,18 @@ class CertificateService {
 
     // Renovado: el frontend enviará "renovado" boolean (recomendado)
     if (updateData.renovado !== undefined) {
-      const markRenewed = String(updateData.renovado) === "true" || updateData.renovado === true;
+      const markRenewed =
+        String(updateData.renovado) === "true" || updateData.renovado === true;
 
       if (markRenewed) {
         updates.status = "RENOVADO";
-
-        // Si no tenía renewedAt, setearlo; si ya tenía, lo conservamos
-        if (!existing.renewedAt) {
-          updates.renewedAt = new Date();
-        }
+        if (!existing.renewedAt) updates.renewedAt = new Date();
       } else {
-        // Se desmarca: limpia renewedAt y recalcula status después
+        // ✅ Desmarcado: limpiar timestamp y SALIR de RENOVADO
         updates.renewedAt = null;
 
-        // OJO: no seteamos status aquí todavía, lo recalculamos con computeExpiry más abajo
-        if (updates.status === "RENOVADO") delete updates.status;
+        // Clave: si venía RENOVADO, lo sacamos de ese estado para que el cálculo aplique
+        updates.status = "ACTIVO"; // placeholder; se recalcula en updateCertificate
       }
     }
 
