@@ -37,87 +37,94 @@ export async function connect() {
 
 // Función para inicializar datos básicos en la base de datos
 async function seed(db) {
-  const users = db.collection("users");     // Colección de usuarios
-  const certs = db.collection("certificates"); // Colección de certificados
+  // ⚠️ Seed solo permitido si la variable está explícitamente activada
+  const shouldSeedDemo = process.env.SEED_DEMO === "1";
+
+  if (!shouldSeedDemo) {
+    logger.info("Seed skipped (SEED_DEMO not enabled)");
+    return;
+  }
+
+  const users = db.collection("users");          // Colección de usuarios
+  const certs = db.collection("certificates");   // Colección de certificados
 
   try {
-    // Verifica si ya existen usuarios, si no, crea los datos iniciales
+    // ======================
+    // Seed de usuarios demo
+    // ======================
     const userCount = await users.countDocuments();
     if (userCount === 0) {
       const bcrypt = await import("bcryptjs");
-      
-      // Crea hashes de contraseñas en paralelo para mejor rendimiento
+
       const [adminHash, clienteHash] = await Promise.all([
-        bcrypt.default.hash("admin123", 10),    // Hash para admin
-        bcrypt.default.hash("cliente123", 10)   // Hash para cliente
+        bcrypt.default.hash("admin123", 10),
+        bcrypt.default.hash("cliente123", 10),
       ]);
 
-      // Inserta usuarios iniciales del sistema
       await users.insertMany([
         {
           username: "admin",
           password: adminHash,
           role: "ADMIN",
           empresa: "FARES",
-          createdAt: new Date()
+          createdAt: new Date(),
         },
         {
           username: "cliente1",
           password: clienteHash,
           role: "CLIENTE",
           empresa: "EMPRESA_DEMO",
-          createdAt: new Date()
+          createdAt: new Date(),
         },
       ]);
-      
-      logger.info("Seed users created", { 
+
+      logger.info("Seed users created", {
         users: ["admin", "cliente1"],
-        database: config.mongodb.dbName 
+        database: db.databaseName,
       });
     }
 
-    // Solo en desarrollo: crea certificados de demostración
-    if (config.isLocal) {
-      const certCount = await certs.countDocuments();
-      if (certCount === 0) {
-        const demoCerts = [
-          // Certificado que cumple
-          {
-            numCert: 1001,
-            serial: "T-ABC-001",
-            fechaCargue: new Date("2024-01-15"),
-            resultado: "CUMPLE",
-            empresa: "EMPRESA_DEMO",
-            assignedUsers: ["cliente1"],
-            links: {
-              informes: "https://drive.google.com/file/d/DEMO_INF/view",
-              formatos: "https://drive.google.com/file/d/DEMO_FOR/view",
-              certificados: "https://drive.google.com/file/d/DEMO_CERT/view",
-            },
-            createdAt: new Date()
+    // ===========================
+    // Seed de certificados demo
+    // ===========================
+    const certCount = await certs.countDocuments();
+    if (certCount === 0) {
+      const demoCerts = [
+        {
+          numCert: 1001,
+          serial: "T-ABC-001",
+          fechaCargue: new Date("2024-01-15"),
+          resultado: "CUMPLE",
+          empresa: "EMPRESA_DEMO",
+          assignedUsers: ["cliente1"],
+          links: {
+            informes: "https://drive.google.com/file/d/DEMO_INF/view",
+            formatos: "https://drive.google.com/file/d/DEMO_FOR/view",
+            certificados: "https://drive.google.com/file/d/DEMO_CERT/view",
           },
-          // Certificado que no cumple
-          {
-            numCert: 1002,
-            serial: "T-XYZ-002",
-            fechaCargue: new Date("2024-02-20"),
-            resultado: "NO CUMPLE",
-            empresa: "EMPRESA_DEMO",
-            assignedUsers: ["cliente1"],
-            links: {
-              informes: "https://drive.google.com/file/d/DEMO_INF2/view",
-              formatos: "https://drive.google.com/file/d/DEMO_FOR2/view",
-              certificados: "https://drive.google.com/file/d/DEMO_CERT2/view",
-            },
-            createdAt: new Date()
+          createdAt: new Date(),
+        },
+        {
+          numCert: 1002,
+          serial: "T-XYZ-002",
+          fechaCargue: new Date("2024-02-20"),
+          resultado: "NO CUMPLE",
+          empresa: "EMPRESA_DEMO",
+          assignedUsers: ["cliente1"],
+          links: {
+            informes: "https://drive.google.com/file/d/DEMO_INF2/view",
+            formatos: "https://drive.google.com/file/d/DEMO_FOR2/view",
+            certificados: "https://drive.google.com/file/d/DEMO_CERT2/view",
           },
-        ];
+          createdAt: new Date(),
+        },
+      ];
 
-        await certs.insertMany(demoCerts);
-        logger.info("Demo certificates created", { count: demoCerts.length });
-      }
+      await certs.insertMany(demoCerts);
+      logger.info("Demo certificates created", { count: demoCerts.length });
     }
   } catch (error) {
     logger.error("Seed operation failed", error);
   }
 }
+

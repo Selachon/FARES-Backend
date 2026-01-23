@@ -40,6 +40,9 @@ export const config = {
       minPoolSize: 2, // Mínimo de conexiones mantenidas
       maxIdleTimeMS: 30000, // Tiempo máximo que una conexión puede estar inactiva (30 seg)
       waitQueueTimeoutMS: 5000, // Tiempo máximo en cola de espera (5 seg)
+      tls: true,
+      tlsAllowInvalidCertificates: true,
+      tlsAllowInvalidHostnames: true,
     },
   },
 
@@ -63,7 +66,7 @@ export const config = {
     // Remitente y destinatario del correo
     from: process.env.EMAIL_FROM || process.env.EMAIL_USER, // Email del remitente
     to: process.env.EMAIL_TO || process.env.EMAIL_USER,     // Email del destinatario
-    
+
     // API Key de Brevo (recomendado sobre SMTP)
     // Se usa para comunicación directa con API REST v3
     brevoApiKey: process.env.BREVO_API_KEY,             // Clave API de Brevo
