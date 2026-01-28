@@ -116,8 +116,13 @@ router.get("/drafts",
 
 router.post("/drafts",
   adminGuard,
+  upload.fields([
+    { name: "informes", maxCount: 1 },
+    { name: "formatos", maxCount: 1 },     // FOR
+    { name: "certificados", maxCount: 1 },
+  ]),
   asyncHandler(async (req, res) => {
-    const draft = await draftService.createDraft(req.body);
+    const draft = await draftService.createDraft(req.body, req.files || {});
     res.status(201).json(draft);
   })
 );

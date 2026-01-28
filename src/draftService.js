@@ -32,6 +32,7 @@ class DraftService {
       source: d.source || "offline_app",
       createdAt: d.createdAt ? new Date(d.createdAt).toISOString() : null,
       updatedAt: d.updatedAt ? new Date(d.updatedAt).toISOString() : null,
+      localId: d.localId || null,
     };
   }
 
@@ -58,7 +59,7 @@ class DraftService {
     }
   }
 
-  async createDraft(data) {
+  async createDraft(data, files = {}) {
     try {
       const db = await connect();
 
@@ -94,7 +95,37 @@ class DraftService {
         source: data.source || "offline_app",
         createdAt: new Date(),
         updatedAt: new Date(),
+        localId: data.localId ? sanitizeString(data.localId) : null,
       };
+
+      // si vienen archivos, súbelos y guarda links
+      const hasFiles = files && Object.keys(files).length > 0;
+      if (hasFiles) {
+        const meta = {
+          Usuario: (doc.assignedUsers || []).join(","),
+          NumCert: String(doc.numCert || "DRAFT"),
+          Serial: String(doc.serial || "DRAFT"),
+        };
+
+        const newLinks = await driveService.uploadCertificateFiles(
+          files,
+          meta,
+          doc.empresa || "DRAFT",
+          doc.numCert || "DRAFT",
+          doc.serial || "DRAFT",
+        );
+
+        doc.links = { ...(doc.links || {}), ...newLinks };
+      }
+
+      if (doc.localId) {
+        const existing = await db
+          .collection(this.collectionName)
+          .findOne({ localId: doc.localId });
+        if (existing) {
+          return this.normalizeDraft(existing); // ya estaba creado
+        }
+      }
 
       // valida enums si vienen
       if (doc.tipoEquipo && !this.isValidEnum(doc.tipoEquipo, ["TE", "CT"])) {
