@@ -64,16 +64,33 @@ class DraftService {
 
       // borrador: permite campos faltantes
       const doc = {
-        numCert: data.numCert !== undefined && data.numCert !== "" ? Number(data.numCert) : null,
+        numCert:
+          data.numCert !== undefined && data.numCert !== ""
+            ? Number(data.numCert)
+            : null,
         serial: data.serial !== undefined ? sanitizeString(data.serial) : "",
         fechaCargue: data.fechaCargue ? new Date(data.fechaCargue) : null,
-        resultado: data.resultado !== undefined ? sanitizeString(data.resultado) : "",
+        resultado:
+          data.resultado !== undefined ? sanitizeString(data.resultado) : "",
         empresa: data.empresa !== undefined ? sanitizeString(data.empresa) : "",
-        assignedUsers: data.assignedUsers !== undefined ? parseUserList(data.assignedUsers) : [],
-        tipoEquipo: data.tipoEquipo !== undefined ? String(data.tipoEquipo).trim().toUpperCase() : null,
-        tipoInspeccion: data.tipoInspeccion !== undefined ? String(data.tipoInspeccion).trim().toUpperCase() : null,
+        assignedUsers:
+          data.assignedUsers !== undefined
+            ? parseUserList(data.assignedUsers)
+            : [],
+        tipoEquipo:
+          data.tipoEquipo !== undefined
+            ? String(data.tipoEquipo).trim().toUpperCase()
+            : null,
+        tipoInspeccion:
+          data.tipoInspeccion !== undefined
+            ? String(data.tipoInspeccion).trim().toUpperCase()
+            : null,
         status: "DRAFT",
-        links: data.links || { informes: "#", formatos: "#", certificados: "#" },
+        links: data.links || {
+          informes: "#",
+          formatos: "#",
+          certificados: "#",
+        },
         source: data.source || "offline_app",
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -83,7 +100,10 @@ class DraftService {
       if (doc.tipoEquipo && !this.isValidEnum(doc.tipoEquipo, ["TE", "CT"])) {
         throw createError("tipoEquipo inválido. Usa TE o CT.", 400);
       }
-      if (doc.tipoInspeccion && !this.isValidEnum(doc.tipoInspeccion, ["PARCIAL", "TOTAL"])) {
+      if (
+        doc.tipoInspeccion &&
+        !this.isValidEnum(doc.tipoInspeccion, ["PARCIAL", "TOTAL"])
+      ) {
         throw createError("tipoInspeccion inválido. Usa PARCIAL o TOTAL.", 400);
       }
 
@@ -116,20 +136,37 @@ class DraftService {
     for (const field of allowed) {
       if (data[field] === undefined) continue;
 
-      if (field === "numCert") updates.numCert = data.numCert === "" ? null : Number(data.numCert);
-      else if (field === "fechaCargue") updates.fechaCargue = data.fechaCargue ? new Date(data.fechaCargue) : null;
-      else if (field === "assignedUsers") updates.assignedUsers = parseUserList(data.assignedUsers);
-      else if (field === "tipoEquipo") updates.tipoEquipo = data.tipoEquipo ? String(data.tipoEquipo).trim().toUpperCase() : null;
-      else if (field === "tipoInspeccion") updates.tipoInspeccion = data.tipoInspeccion ? String(data.tipoInspeccion).trim().toUpperCase() : null;
+      if (field === "numCert")
+        updates.numCert = data.numCert === "" ? null : Number(data.numCert);
+      else if (field === "fechaCargue")
+        updates.fechaCargue = data.fechaCargue
+          ? new Date(data.fechaCargue)
+          : null;
+      else if (field === "assignedUsers")
+        updates.assignedUsers = parseUserList(data.assignedUsers);
+      else if (field === "tipoEquipo")
+        updates.tipoEquipo = data.tipoEquipo
+          ? String(data.tipoEquipo).trim().toUpperCase()
+          : null;
+      else if (field === "tipoInspeccion")
+        updates.tipoInspeccion = data.tipoInspeccion
+          ? String(data.tipoInspeccion).trim().toUpperCase()
+          : null;
       else if (field === "links") updates.links = data.links;
       else updates[field] = sanitizeString(data[field]);
     }
 
     // valida enums si vienen
-    if (updates.tipoEquipo && !this.isValidEnum(updates.tipoEquipo, ["TE", "CT"])) {
+    if (
+      updates.tipoEquipo &&
+      !this.isValidEnum(updates.tipoEquipo, ["TE", "CT"])
+    ) {
       throw createError("tipoEquipo inválido. Usa TE o CT.", 400);
     }
-    if (updates.tipoInspeccion && !this.isValidEnum(updates.tipoInspeccion, ["PARCIAL", "TOTAL"])) {
+    if (
+      updates.tipoInspeccion &&
+      !this.isValidEnum(updates.tipoInspeccion, ["PARCIAL", "TOTAL"])
+    ) {
       throw createError("tipoInspeccion inválido. Usa PARCIAL o TOTAL.", 400);
     }
 
@@ -142,7 +179,9 @@ class DraftService {
       const _id = new ObjectId(id);
       const db = await connect();
 
-      const existing = await db.collection(this.collectionName).findOne({ _id });
+      const existing = await db
+        .collection(this.collectionName)
+        .findOne({ _id });
       if (!existing) throw createError("No existe el borrador", 404);
 
       const updates = this.buildDraftUpdates(existing, updateData);
@@ -163,13 +202,15 @@ class DraftService {
           meta,
           effective.empresa || "DRAFT",
           effective.numCert || "DRAFT",
-          effective.serial || "DRAFT"
+          effective.serial || "DRAFT",
         );
 
         updates.links = { ...(existing.links || {}), ...newLinks };
       }
 
-      await db.collection(this.collectionName).updateOne({ _id }, { $set: updates });
+      await db
+        .collection(this.collectionName)
+        .updateOne({ _id }, { $set: updates });
       const updated = await db.collection(this.collectionName).findOne({ _id });
 
       cacheService.clear("all_drafts");
@@ -218,23 +259,25 @@ class DraftService {
     const au = Array.isArray(d.assignedUsers) ? d.assignedUsers : [];
     if (au.length === 0) missing.push("assignedUsers");
 
-    const te = String(d.tipoEquipo || "").trim().toUpperCase();
-    const ti = String(d.tipoInspeccion || "").trim().toUpperCase();
+    const te = String(d.tipoEquipo || "")
+      .trim()
+      .toUpperCase();
+    const ti = String(d.tipoInspeccion || "")
+      .trim()
+      .toUpperCase();
 
     if (!this.isValidEnum(te, ["TE", "CT"])) missing.push("tipoEquipo");
-    if (!this.isValidEnum(ti, ["PARCIAL", "TOTAL"])) missing.push("tipoInspeccion");
+    if (!this.isValidEnum(ti, ["PARCIAL", "TOTAL"]))
+      missing.push("tipoInspeccion");
 
-    const links = d.links || {};
-    const linkMissing = [];
-    if (!links.informes || links.informes === "#") linkMissing.push("informes");
-    if (!links.formatos || links.formatos === "#") linkMissing.push("formatos");
-    if (!links.certificados || links.certificados === "#") linkMissing.push("certificados");
+    // ✅ IMPORTANTE: Archivos NO son obligatorios para publicar.
+    // links puede ir vacío o con "#", y aún así se publica.
 
-    if (missing.length || linkMissing.length) {
-      const msgParts = [];
-      if (missing.length) msgParts.push(`Campos faltantes: ${missing.join(", ")}`);
-      if (linkMissing.length) msgParts.push(`Archivos faltantes: ${linkMissing.join(", ")}`);
-      throw createError(`No se puede publicar. ${msgParts.join(" | ")}`, 400);
+    if (missing.length) {
+      throw createError(
+        `No se puede publicar. Campos faltantes: ${missing.join(", ")}`,
+        400,
+      );
     }
 
     return { te, ti };
@@ -257,15 +300,23 @@ class DraftService {
       const document = {
         numCert: Number(draft.numCert),
         serial: sanitizeString(draft.serial),
-        fechaCargue: draft.fechaCargue ? new Date(draft.fechaCargue) : new Date(),
+        fechaCargue: draft.fechaCargue
+          ? new Date(draft.fechaCargue)
+          : new Date(),
         resultado: sanitizeString(draft.resultado || "CUMPLE"),
         empresa: sanitizeString(draft.empresa),
-        assignedUsers: Array.isArray(draft.assignedUsers) ? draft.assignedUsers : [],
+        assignedUsers: Array.isArray(draft.assignedUsers)
+          ? draft.assignedUsers
+          : [],
         tipoEquipo: te,
         tipoInspeccion: ti,
         status: "ACTIVO",
         renewedAt: null,
-        links: draft.links || { informes: "#", formatos: "#", certificados: "#" },
+        links: draft.links || {
+          informes: "#",
+          formatos: "#",
+          certificados: "#",
+        },
         createdAt: new Date(),
       };
 
@@ -278,7 +329,9 @@ class DraftService {
       cacheService.clear("all_certificates");
       cacheService.clear("all_drafts");
 
-      const created = await db.collection("certificates").findOne({ _id: insert.insertedId });
+      const created = await db
+        .collection("certificates")
+        .findOne({ _id: insert.insertedId });
       return certificateService.normalizeCertificate(created);
     } catch (error) {
       if (error.statusCode) throw error;
