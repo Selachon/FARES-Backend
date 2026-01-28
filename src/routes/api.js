@@ -7,6 +7,7 @@ import { emailService } from "../emailService.js";
 import { userService } from "../userService.js";
 import { certificateService } from "../certificateService.js";
 import { configService } from "../configService.js";
+import { draftService } from "../draftService.js";
 import { adminGuard, healthMiddleware } from "../middleware.js";
 import { performanceMonitor } from "../performanceMonitor.js";
 
@@ -99,6 +100,57 @@ router.delete("/certificates/bulk",
     // Elimina múltiples certificados en una sola operación
     const result = await certificateService.deleteCertificates(items);
     res.json(result);
+  })
+);
+
+// =====================
+// Rutas de BORRADORES (solo ADMIN)
+// =====================
+router.get("/drafts",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const drafts = await draftService.getAllDrafts();
+    res.json(drafts);
+  })
+);
+
+router.post("/drafts",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const draft = await draftService.createDraft(req.body);
+    res.status(201).json(draft);
+  })
+);
+
+router.put("/drafts/:id",
+  adminGuard,
+  upload.fields([
+    { name: "informes", maxCount: 1 },
+    { name: "formatos", maxCount: 1 },
+    { name: "certificados", maxCount: 1 },
+  ]),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const draft = await draftService.updateDraft(id, req.body, req.files || {});
+    res.json(draft);
+  })
+);
+
+router.delete("/drafts/bulk",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { ids } = req.body;
+    const result = await draftService.deleteDraftsByIds(ids);
+    res.json(result);
+  })
+);
+
+router.post("/drafts/:id/publish",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const created = await draftService.publishDraft(id);
+    res.status(201).json(created);
   })
 );
 
