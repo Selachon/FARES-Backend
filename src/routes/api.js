@@ -227,9 +227,6 @@ router.post(
     });
 
     await Promise.all(filePromises);
-        await inner.finalize();
-      }
-    }
 
     await main.finalize();
   }),
