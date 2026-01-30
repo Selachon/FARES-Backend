@@ -65,6 +65,22 @@ export const adminGuard = (req, res, next) => {
   next(); // Permite continuar si es administrador
 };
 
+export const userGuard = (req, res, next) => {
+  const role = String(req.headers["x-role"] || "").toUpperCase();
+  const username = String(req.headers["x-user"] || "").trim();
+  const empresa = String(req.headers["x-empresa"] || "").trim();
+
+  if (role !== "USER" || !username || !empresa) {
+    return res.status(403).json({
+      message: "Solo USER",
+      code: "INSUFFICIENT_PERMISSIONS",
+    });
+  }
+
+  req.user = { username, empresa, role };
+  next();
+};
+
 // Middleware centralizado de manejo de errores
 export const errorHandler = (error, req, res, next) => {
   const statusCode = error.statusCode || 500;

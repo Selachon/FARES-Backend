@@ -92,6 +92,44 @@ class DriveService {
     });
   }
 
+    // Extrae fileId desde distintos formatos de link de Drive
+  extractFileIdFromLink(link) {
+    if (!link || link === "#") return null;
+
+    const s = String(link);
+
+    // Formato típico: https://drive.google.com/file/d/<ID>/view
+    let m = s.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (m?.[1]) return m[1];
+
+    // Formato: https://drive.google.com/open?id=<ID>
+    m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (m?.[1]) return m[1];
+
+    // Formato: https://drive.google.com/uc?id=<ID>&export=download
+    m = s.match(/\/uc\?id=([a-zA-Z0-9_-]+)/);
+    if (m?.[1]) return m[1];
+
+    return null;
+  }
+
+  // Devuelve nombre original + stream de descarga desde Drive
+  async downloadFileStream(fileId) {
+    if (!fileId) throw new Error("fileId requerido");
+
+    // 1) nombre real en Drive
+    const info = await this.getFileInfo(fileId);
+    const name = info?.name || fileId;
+
+    // 2) contenido como stream
+    const resp = await this.drive.files.get(
+      { fileId, alt: "media", supportsAllDrives: true },
+      { responseType: "stream" }
+    );
+
+    return { name, stream: resp.data };
+  }
+
   // Sube archivo a Google Drive con metadatos y permisos
   async uploadFile({
     localPath,

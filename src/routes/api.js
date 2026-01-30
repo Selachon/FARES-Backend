@@ -8,8 +8,11 @@ import { userService } from "../userService.js";
 import { certificateService } from "../certificateService.js";
 import { configService } from "../configService.js";
 import { draftService } from "../draftService.js";
-import { adminGuard, healthMiddleware } from "../middleware.js";
+import { adminGuard, healthMiddleware, userGuard } from "../middleware.js";
 import { performanceMonitor } from "../performanceMonitor.js";
+import archiver from "archiver";
+import { ObjectId } from "mongodb";
+import { driveService } from "../driveService.js";
 
 // Router de Express para agrupar todas las rutas de la API
 const router = express.Router();
@@ -65,6 +68,141 @@ router.get("/certificates", asyncHandler(async (req, res) => {
   const certificates = await certificateService.getAllCertificates();
   res.json(certificates);
 }));
+
+router.post("/certificates/download",
+  userGuard,
+  asyncHandler(async (req, res) => {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ message: "ids requeridos", code: "BAD_REQUEST" });
+    }
+
+    const { username, empresa } = req.user;
+
+    // Trae certificados por ID
+    const db = await (await import("../db.js")).connect();
+    const objIds = ids.map((id) => new ObjectId(id));
+    const certs = await db
+      .collection("certificates")
+      .find({ _id: { $in: objIds } })
+      .toArray();
+
+    if (!certs.length) {
+      return res.status(404).json({ message: "No se encontraron certificados", code: "NOT_FOUND" });
+    }
+
+    // Valida pertenencia estricta
+    const allowed = certs.filter((c) => {
+      const sameEmpresa = String(c.empresa || "") === String(empresa);
+      const au = Array.isArray(c.assignedUsers) ? c.assignedUsers : [];
+      const hasUser = au.some((u) => String(u).trim() === String(username));
+      return sameEmpresa && hasUser;
+    });
+
+    if (allowed.length !== certs.length) {
+      return res.status(403).json({
+        message: "Uno o más certificados no te pertenecen",
+        code: "INSUFFICIENT_PERMISSIONS",
+      });
+    }
+
+    // Construye lista por certificado: archivos existentes (no "#")
+    const certPayloads = allowed.map((c) => {
+      const links = c.links || {};
+      const candidates = [
+        { kind: "informes", link: links.informes },
+        { kind: "formatos", link: links.formatos },
+        { kind: "certificados", link: links.certificados },
+      ];
+
+      const files = candidates
+        .map((x) => ({ ...x, fileId: driveService.extractFileIdFromLink(x.link) }))
+        .filter((x) => x.fileId);
+
+      return {
+        id: c._id.toString(),
+        numCert: c.numCert,
+        serial: c.serial,
+        files,
+      };
+    });
+
+    // Si seleccionó 1 registro
+    if (certPayloads.length === 1) {
+      const one = certPayloads[0];
+
+      // Si tiene 1 archivo: se entrega tal cual (sin zip)
+      if (one.files.length === 1) {
+        const f = one.files[0];
+        const { name, stream } = await driveService.downloadFileStream(f.fileId);
+
+        res.setHeader("Content-Type", "application/octet-stream");
+        res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+        stream.on("error", () => {
+          // si el stream falla, cortamos
+          try { res.end(); } catch {}
+        });
+        return stream.pipe(res);
+      }
+
+      // Si tiene 2 o 3: zip por certificado "<#> - <serial>.zip"
+      const zipName = `${one.numCert} - ${one.serial}.zip`;
+
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`);
+
+      const archive = archiver("zip", { zlib: { level: 9 } });
+      archive.on("error", (err) => { throw err; });
+      archive.pipe(res);
+
+      for (const f of one.files) {
+        const { name, stream } = await driveService.downloadFileStream(f.fileId);
+        archive.append(stream, { name }); // nombre original SIN CAMBIOS
+      }
+
+      await archive.finalize();
+      return;
+    }
+
+    // Si seleccionó más de 1: zip general "Certificados <EMPRESA>.zip"
+    const mainName = `Certificados ${empresa}.zip`;
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${mainName}"`);
+
+    const main = archiver("zip", { zlib: { level: 9 } });
+    main.on("error", (err) => { throw err; });
+    main.pipe(res);
+
+    // Cada certificado:
+    // - si tiene 1 archivo: lo mete directo a la raíz (con nombre original)
+    // - si tiene >1: crea zip interno "<#> - <serial>.zip"
+    for (const c of certPayloads) {
+      if (c.files.length === 1) {
+        const f = c.files[0];
+        const { name, stream } = await driveService.downloadFileStream(f.fileId);
+        main.append(stream, { name });
+      } else {
+        const innerZipName = `${c.numCert} - ${c.serial}.zip`;
+
+        // Creamos un zip “virtual” como stream y lo metemos dentro del zip principal
+        const inner = archiver("zip", { zlib: { level: 9 } });
+        inner.on("error", (err) => { throw err; });
+
+        main.append(inner, { name: innerZipName });
+
+        for (const f of c.files) {
+          const { name, stream } = await driveService.downloadFileStream(f.fileId);
+          inner.append(stream, { name }); // nombre original SIN CAMBIOS
+        }
+
+        await inner.finalize();
+      }
+    }
+
+    await main.finalize();
+  })
+);
 
 router.post("/certificates", 
   upload.fields([  // Sube múltiples archivos: informes, formatos, certificados
