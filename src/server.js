@@ -1,4 +1,5 @@
-// Importaciones principales del framework y módulos locales
+// Archivo principal del servidor web
+// Configura y arranca el servidor Express con todos los middlewares y rutas
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
@@ -13,74 +14,81 @@ import {
 } from "./middleware.js";
 import apiRoutes from "./routes/api.js";
 
-// Creación de la aplicación Express
+// Crear instancia de aplicación Express
 const app = express();
 
-// Configuración de CORS para permitir solicitudes desde dominios específicos
+// Configurar middleware CORS global
 app.use(cors({
-  origin: config.cors.allowedOrigins, // Dominios permitidos
-  credentials: true                   // Permite cookies y autenticación
+  origin: config.cors.allowedOrigins,  // Orígenes permitidos desde config
+  credentials: true                    // Permitir cookies y autenticación
 }));
-app.options("*", cors()); // Habilita pre-flight requests
+// Habilitar preflight OPTIONS para todas las rutas
+app.options("*", cors());
 
-// Middleware personalizados
-app.use(corsMiddleware);                    // Control adicional de CORS
-app.use(express.json({ limit: "10mb" }));   // Parseo de JSON (10MB max)
-app.use(express.urlencoded({ extended: true, limit: "10mb" })); // Parseo de formularios
-app.use(morgan(config.env === "production" ? "combined" : "dev")); // Logs HTTP
-app.use(requestLogger);                        // Logger personalizado con métricas
+// Aplicar middleware personalizado de CORS (validación adicional)
+app.use(corsMiddleware);
+// Middleware para parsear JSON con límite de 10MB
+app.use(express.json({ limit: "10mb" }));
+// Middleware para parsear form data URL-encoded con límite de 10MB
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+// Middleware de logging HTTP (formato diferente para producción/development)
+app.use(morgan(config.env === "production" ? "combined" : "dev"));
+// Middleware personalizado de logging de peticiones
+app.use(requestLogger);
 
-// Endpoints básicos del sistema
-app.get("/", (_, res) => res.status(200).send("OK")); // Health check simple
-app.get("/healthz", healthMiddleware);              // Health check detallado
+// Rutas básicas
+app.get("/", (_, res) => res.status(200).send("OK"));  // Endpoint de verificación simple
+app.get("/healthz", healthMiddleware);                 // Endpoint de health check para orchestration
 
-// Monta rutas de la API bajo prefijo /api
+// Montar rutas de API bajo /api
 app.use("/api", apiRoutes);
 
-// Middleware para manejo de errores (deben ir al final)
-app.use(notFoundHandler); // Para rutas no encontradas (404)
-app.use(errorHandler);    // Para errores generales (500)
+// Middleware para manejar rutas no encontradas (404)
+app.use(notFoundHandler);
+// Middleware para manejar errores globalmente
+app.use(errorHandler);
 
-// Manejo de rechazos de promesas no manejados
+// Manejar promesas rechazadas no capturadas
 process.on("unhandledRejection", (reason, promise) => {
   logger.error("Unhandled Rejection", { reason, promise });
 });
 
-// Manejo de excepciones no capturadas (error crítico)
+// Manejar excepciones no capturadas
 process.on("uncaughtException", (error) => {
   logger.error("Uncaught Exception", error);
-  process.exit(1); // Termina proceso inmediatamente
+  process.exit(1);  // Salir inmediatamente en caso de excepción no capturada
 });
 
 // Función para apagado graceful del servidor
+// Cierra conexiones de forma ordenada al recibir señales del sistema
 const gracefulShutdown = (signal) => {
   logger.info(`Received ${signal}, shutting down gracefully`);
   
-  // Cierra servidor HTTP para no aceptar más conexiones
-  server.close(() => {
+  server.close(async () => {
     logger.info("HTTP server closed");
     
-    // Cierra conexión a base de datos antes de terminar
-    import("./db.js").then(({ client }) => {
+    try {
+      // Cerrar conexión a MongoDB si está activa
+      const { client } = await import("./db.js");
       if (client) {
-        client.close(() => {
-          logger.info("MongoDB connection closed");
-          process.exit(0);
-        });
-      } else {
-        process.exit(0);
+        await client.close();
+        logger.info("MongoDB connection closed");
       }
-    });
+      process.exit(0);
+    } catch (error) {
+      logger.error("Error during shutdown", error);
+      process.exit(1);
+    }
   });
   
-  // Forza apagado después de 10 segundos si no se completa gracefully
+  // Forzar cierre si el graceful shutdown tarda demasiado (10 segundos)
   setTimeout(() => {
     logger.error("Forced shutdown after timeout");
     process.exit(1);
   }, 10000);
 };
 
-// Inicia servidor en puerto y host configurados
+// Iniciar servidor HTTP en puerto y host configurados
 const server = app.listen(config.server.port, config.server.host, () => {
   logger.info(`Server started`, {
     env: config.env,
@@ -90,8 +98,8 @@ const server = app.listen(config.server.port, config.server.host, () => {
   });
 });
 
-// Registra manejadores para señales del sistema operativo
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM")); // Señal de terminación (ej: k8s)
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));   // Señal de interrupción (Ctrl+C)
+// Registrar manejadores para señales de apagado del sistema
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));  // Señal de terminación
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));    // Señal de interrupción (Ctrl+C)
 
 export default app;

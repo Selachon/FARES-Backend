@@ -1,3 +1,5 @@
+// Servicio de gestión de borradores de certificados
+// Permite crear y editar borradores antes de publicarlos como certificados definitivos
 import { connect } from "./db.js";
 import { logger, parseUserList, createError, sanitizeString } from "./utils.js";
 import { driveService } from "./driveService.js";
@@ -11,7 +13,7 @@ class DraftService {
     this.collectionName = "drafts";
   }
 
-  // --- helpers ---
+  
   isValidEnum(value, allowed) {
     return allowed.includes(String(value || "").trim());
   }
@@ -36,7 +38,7 @@ class DraftService {
     };
   }
 
-  // --- CRUD ---
+  
   async getAllDrafts() {
     try {
       return await cacheService.getOrSet(
@@ -51,7 +53,7 @@ class DraftService {
 
           return drafts.map((d) => this.normalizeDraft(d));
         },
-        60 * 1000, // 1 min cache (borradores cambian más seguido)
+        60 * 1000,
       );
     } catch (error) {
       logger.error("Failed to get drafts", error);
@@ -63,7 +65,7 @@ class DraftService {
     try {
       const db = await connect();
 
-      // borrador: permite campos faltantes
+      
       const doc = {
         numCert:
           data.numCert !== undefined && data.numCert !== ""
@@ -98,7 +100,7 @@ class DraftService {
         localId: data.localId ? sanitizeString(data.localId) : null,
       };
 
-      // si vienen archivos, súbelos y guarda links
+      
       const hasFiles = files && Object.keys(files).length > 0;
       if (hasFiles) {
         const meta = {
@@ -108,19 +110,18 @@ class DraftService {
         };
 
         const newLinks = await driveService.uploadCertificateFiles(
-  files,
-  meta,
-  doc.empresa || "DRAFT",
-  doc.numCert || "DRAFT",
-  doc.serial || "DRAFT",
-);
+          files,
+          meta,
+          doc.empresa || "DRAFT",
+          doc.numCert || "DRAFT",
+          doc.serial || "DRAFT",
+        );
 
-// ✅ No pisar links existentes con "#"
-const cleanedLinks = Object.fromEntries(
-  Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
-);
+        const cleanedLinks = Object.fromEntries(
+          Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
+        );
 
-doc.links = { ...(doc.links || {}), ...cleanedLinks };
+        doc.links = { ...(doc.links || {}), ...cleanedLinks };
       }
 
       if (doc.localId) {
@@ -128,11 +129,11 @@ doc.links = { ...(doc.links || {}), ...cleanedLinks };
           .collection(this.collectionName)
           .findOne({ localId: doc.localId });
         if (existing) {
-          return this.normalizeDraft(existing); // ya estaba creado
+          return this.normalizeDraft(existing);
         }
       }
 
-      // valida enums si vienen
+
       if (doc.tipoEquipo && !this.isValidEnum(doc.tipoEquipo, ["TE", "CT"])) {
         throw createError("tipoEquipo inválido. Usa TE o CT.", 400);
       }
@@ -222,7 +223,6 @@ doc.links = { ...(doc.links || {}), ...cleanedLinks };
 
       const updates = this.buildDraftUpdates(existing, updateData);
 
-      // si vienen archivos, los subimos y guardamos links en el draft
       const hasFiles = files && Object.keys(files).length > 0;
       if (hasFiles) {
         const effective = { ...existing, ...updates };
@@ -234,21 +234,20 @@ doc.links = { ...(doc.links || {}), ...cleanedLinks };
         };
 
         const newLinks = await driveService.uploadCertificateFiles(
-  files,
-  meta,
-  effective.empresa || "DRAFT",
-  effective.numCert || "DRAFT",
-  effective.serial || "DRAFT",
-);
+          files,
+          meta,
+          effective.empresa || "DRAFT",
+          effective.numCert || "DRAFT",
+          effective.serial || "DRAFT",
+        );
 
-// ✅ No pisar links existentes con "#"
-const cleanedLinks = Object.fromEntries(
-  Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
-);
+        const cleanedLinks = Object.fromEntries(
+          Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
+        );
 
-if (Object.keys(cleanedLinks).length > 0) {
-  updates.links = { ...(existing.links || {}), ...cleanedLinks };
-}
+        if (Object.keys(cleanedLinks).length > 0) {
+          updates.links = { ...(existing.links || {}), ...cleanedLinks };
+        }
       }
 
       await db
@@ -289,9 +288,11 @@ if (Object.keys(cleanedLinks).length > 0) {
     }
   }
 
-  // --- publish ---
+  
   validatePublishableDraft(d) {
     const missing = [];
+    const validEquipos = ["TE", "CT"];
+    const validInspecciones = ["PARCIAL", "TOTAL"];
 
     const numCertOk = typeof d.numCert === "number" && !Number.isNaN(d.numCert);
     if (!numCertOk) missing.push("numCert");
@@ -302,19 +303,11 @@ if (Object.keys(cleanedLinks).length > 0) {
     const au = Array.isArray(d.assignedUsers) ? d.assignedUsers : [];
     if (au.length === 0) missing.push("assignedUsers");
 
-    const te = String(d.tipoEquipo || "")
-      .trim()
-      .toUpperCase();
-    const ti = String(d.tipoInspeccion || "")
-      .trim()
-      .toUpperCase();
+    const te = String(d.tipoEquipo || "").trim().toUpperCase();
+    const ti = String(d.tipoInspeccion || "").trim().toUpperCase();
 
-    if (!this.isValidEnum(te, ["TE", "CT"])) missing.push("tipoEquipo");
-    if (!this.isValidEnum(ti, ["PARCIAL", "TOTAL"]))
-      missing.push("tipoInspeccion");
-
-    // ✅ IMPORTANTE: Archivos NO son obligatorios para publicar.
-    // links puede ir vacío o con "#", y aún así se publica.
+    if (!this.isValidEnum(te, validEquipos)) missing.push("tipoEquipo");
+    if (!this.isValidEnum(ti, validInspecciones)) missing.push("tipoInspeccion");
 
     if (missing.length) {
       throw createError(
@@ -336,10 +329,10 @@ if (Object.keys(cleanedLinks).length > 0) {
 
       const { te, ti } = this.validatePublishableDraft(draft);
 
-      // valida usuarios existen para esa empresa
+      
       await userService.validateUsersExist(draft.assignedUsers, draft.empresa);
 
-      // construye doc final en certificates
+      
       const document = {
         numCert: Number(draft.numCert),
         serial: sanitizeString(draft.serial),

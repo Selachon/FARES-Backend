@@ -1,3 +1,5 @@
+// Servicio de integración con Google Drive
+// Maneja autenticación OAuth, subida, descarga y gestión de archivos en Google Drive
 import { google } from "googleapis";
 import fs from "fs";
 import { config } from "./config.js";
@@ -5,53 +7,57 @@ import { logger, retryOperation, pickFirst } from "./utils.js";
 import { performanceMonitor } from "./performanceMonitor.js";
 import { connect } from "./db.js";
 
-// Servicio centralizado para operaciones con Google Drive
 class DriveService {
   constructor() {
-    this.oauth2 = null; // Cliente OAuth2 de Google
-    this.drive = null; // Cliente de Google Drive
-    this.initializeAuth(); // Inicializa autenticación al crear instancia
+    this.oauth2 = null;
+    this.drive = null;
+    this.initializeAuth();
   }
 
-  // Inicializa la autenticación OAuth2 con Google APIs
+  // Inicializar autenticación OAuth2 con Google
   initializeAuth() {
-    // Crea cliente OAuth2 con credenciales desde configuración
+    // Crear cliente OAuth2 con credenciales de config
     this.oauth2 = new google.auth.OAuth2(
-      config.google.oauth.clientId, // ID de cliente OAuth2
-      config.google.oauth.clientSecret, // Secreto de cliente OAuth2
+      config.google.oauth.clientId,
+      config.google.oauth.clientSecret,
     );
-
-    // Establece credenciales usando refresh token (para acceso persistente)
+    // Establecer credenciales con token de refresco
     this.oauth2.setCredentials({
       refresh_token: config.google.oauth.refreshToken,
     });
 
-    // Crea cliente de Drive API con autenticación
+    
+    // Crear cliente de Drive API v3 con autenticación
     this.drive = google.drive({ version: "v3", auth: this.oauth2 });
 
-    // Realiza conexión inicial para detectar problemas temprano
+    
+    // Realizar calentamiento de autenticación para verificar credenciales
     this.warmUpAuth();
   }
 
-  // Realiza conexión inicial para verificar credenciales y refrescar token
+  
+  // Calentamiento de autenticación para verificar credenciales al iniciar
   async warmUpAuth() {
     try {
-      await this.oauth2.getAccessToken(); // Fuerza refresco de access token
+      await this.oauth2.getAccessToken();
       logger.info("Google OAuth warm-up successful");
     } catch (error) {
       logger.warn("Google OAuth warm-up failed", { error: error.message });
     }
   }
 
-  // Cache de folders para no consultar Mongo en cada subida
+  
+  // Cache de configuración de carpetas para reducir consultas a BD
   driveFoldersCache = null;
   driveFoldersCacheUntil = 0;
 
-  // Lee las carpetas desde MongoDB (colección: "config", key: "driveFolders")
+  
+  // Obtener configuración de carpetas de Drive desde BD con caché
   async getDriveFolders() {
     const now = Date.now();
 
-    // 1 minuto de cache
+    
+    // Usar caché si está vigente (1 minuto)
     if (this.driveFoldersCache && now < this.driveFoldersCacheUntil) {
       return this.driveFoldersCache;
     }
@@ -59,14 +65,16 @@ class DriveService {
     try {
       const db = await connect();
 
+      // Obtener configuración desde colección config
       const doc = await db
         .collection("config")
         .findOne({ key: "driveFolders" }, { projection: { _id: 0, value: 1 } });
 
       const folders = doc?.value || {};
 
+      // Actualizar caché
       this.driveFoldersCache = folders;
-      this.driveFoldersCacheUntil = now + 60_000;
+      this.driveFoldersCacheUntil = now + 60_000; // 1 minuto de caché
 
       return folders;
     } catch (error) {
@@ -80,48 +88,48 @@ class DriveService {
     }
   }
 
-  // Obtiene información de un archivo en Drive
+  
   async getFileInfo(fileId) {
     return retryOperation(async () => {
       const response = await this.drive.files.get({
         fileId,
-        fields: "id,name,parents,mimeType,driveId", // Campos específicos solicitados
-        supportsAllDrives: true, // Soporta Shared Drives
+        fields: "id,name,parents,mimeType,driveId",
+        supportsAllDrives: true,
       });
       return response.data;
     });
   }
 
-    // Extrae fileId desde distintos formatos de link de Drive
+    
   extractFileIdFromLink(link) {
     if (!link || link === "#") return null;
 
     const s = String(link);
 
-    // Formato típico: https://drive.google.com/file/d/<ID>/view
+    
     let m = s.match(/\/d\/([a-zA-Z0-9_-]+)/);
     if (m?.[1]) return m[1];
 
-    // Formato: https://drive.google.com/open?id=<ID>
+    
     m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/);
     if (m?.[1]) return m[1];
 
-    // Formato: https://drive.google.com/uc?id=<ID>&export=download
+    
     m = s.match(/\/uc\?id=([a-zA-Z0-9_-]+)/);
     if (m?.[1]) return m[1];
 
     return null;
   }
 
-  // Devuelve nombre original + stream de descarga desde Drive
+  
   async downloadFileStream(fileId) {
     if (!fileId) throw new Error("fileId requerido");
 
-    // 1) nombre real en Drive
+    
     const info = await this.getFileInfo(fileId);
     const name = info?.name || fileId;
 
-    // 2) contenido como stream
+    
     const resp = await this.drive.files.get(
       { fileId, alt: "media", supportsAllDrives: true },
       { responseType: "stream" }
@@ -130,7 +138,7 @@ class DriveService {
     return { name, stream: resp.data };
   }
 
-  // Sube archivo a Google Drive con metadatos y permisos
+  
   async uploadFile({
     localPath,
     fileName,
@@ -138,9 +146,9 @@ class DriveService {
     appProperties = {},
     folderId,
   }) {
-    performanceMonitor.trackDriveOperation(); // Registra operación para métricas
+    performanceMonitor.trackDriveOperation();
 
-    // Determina carpeta destino: específica o por defecto
+    
     const targetFolder = folderId || config.google.drive.parentFolderId;
 
     if (!targetFolder) {
@@ -149,36 +157,36 @@ class DriveService {
       );
     }
 
-    // Verifica que tengamos acceso a la carpeta destino
+    
     await this.validateFolderAccess(targetFolder);
 
-    // Prepara media stream para subida eficiente
+    
     const media = { mimeType, body: fs.createReadStream(localPath) };
 
     return retryOperation(async () => {
-      // Crea archivo en Drive con metadatos
+      
       const response = await this.drive.files.create({
         requestBody: {
-          name: fileName, // Nombre del archivo
-          parents: [targetFolder], // Carpeta destino
-          mimeType, // Tipo MIME
-          description: this.buildDescription(appProperties), // Descripción con metadatos
+          name: fileName,
+          parents: [targetFolder],
+          mimeType,
+          description: this.buildDescription(appProperties),
         },
-        media, // Stream del archivo
-        fields: "id, webViewLink, webContentLink", // Campos a retornar
-        supportsAllDrives: true, // Soporta Shared Drives
+        media,
+        fields: "id, webViewLink, webContentLink",
+        supportsAllDrives: true,
       });
 
-      // Configura permisos de compartición del archivo
+      
       await this.setPermissions(response.data.id);
       return response.data;
     });
   }
 
-  // Verifica que la carpeta destino exista y sea accesible
+  
   async validateFolderAccess(folderId) {
     try {
-      await this.getFileInfo(folderId); // Intenta obtener info de la carpeta
+      await this.getFileInfo(folderId);
     } catch (error) {
       throw new Error(
         "No hay acceso a la carpeta destino (revisa OAuth y el ID)",
@@ -186,7 +194,7 @@ class DriveService {
     }
   }
 
-  // Construye descripción del archivo con metadatos del certificado
+  
   buildDescription(appProperties) {
     return [
       `Usuario(s): ${appProperties.Usuario || ""}`,
@@ -195,82 +203,68 @@ class DriveService {
     ].join(" | ");
   }
 
-  // Configura permisos de compartición para archivos subidos
+  
   async setPermissions(fileId) {
     const { share } = config.google.drive;
     const perm = { type: share.type, role: share.role };
 
-    // Si es compartición por dominio, especifica el dominio
+    
     if (share.type === "domain" && share.domain) {
       perm.domain = share.domain;
     }
 
-    // Crea permisos para que el archivo sea accesible
+    
     await this.drive.permissions.create({
       fileId,
       requestBody: perm,
     });
   }
 
-  // Sube los tres tipos de archivos de un certificado en paralelo
+  
   async uploadCertificateFiles(files, meta, empresa, numCert, serial) {
-    const timestamp = Date.now(); // Timestamp único para todos los archivos
+    const timestamp = Date.now();
     const results = {};
-
-    // Define los tres tipos de archivos a procesar
-    // 1) folders desde Mongo (override)
+    
     const dbFolders = await this.getDriveFolders();
-
-    // 2) fallback a env/config.js si en DB falta algo
-    const INF = dbFolders.INF || config.google.drive.folders.INF;
-    const FOR = dbFolders.FOR || config.google.drive.folders.FOR;
-    const CERT = dbFolders.CERT || config.google.drive.folders.CERT;
-
-    // 3) fallback final al parentFolderId (si existe)
     const parent = config.google.drive.parentFolderId;
 
-    const uploadPromises = [
-      { file: pickFirst(files.informes), type: "INF", folder: INF || parent },
-      { file: pickFirst(files.formatos), type: "FOR", folder: FOR || parent },
-      {
-        file: pickFirst(files.certificados),
-        type: "CERT",
-        folder: CERT || parent,
-      },
+    const folderConfigs = [
+      { fileKey: "informes", type: "INF", folderKey: "INF" },
+      { fileKey: "formatos", type: "FOR", folderKey: "FOR" },
+      { fileKey: "certificados", type: "CERT", folderKey: "CERT" },
     ];
 
-    // Procesa todas las subidas en paralelo para mejor rendimiento
-    await Promise.all(
-      uploadPromises.map(async ({ file, type, folder }) => {
-        if (file) {
-          try {
-            const result = await this.uploadFile({
-              localPath: file.path,
-              fileName: `${empresa}_${numCert}_${serial}_${timestamp}${this.getFileExtension(file.originalname)}`,
-              mimeType: file.mimetype || "application/pdf",
-              appProperties: meta,
-              folderId: folder,
-            });
-            results[type.toLowerCase()] = result.webViewLink;
-          } catch (error) {
-            logger.error(`Failed to upload ${type} file`, error);
-            throw error;
-          }
-        }
-      }),
-    );
+    const uploadPromises = folderConfigs.map(async ({ fileKey, type, folderKey }) => {
+      const file = pickFirst(files[fileKey]);
+      if (!file) return;
 
-    // Retorna objeto con los enlaces de todos los archivos
-    // ✅ Devuelve SOLO los links que realmente se subieron.
-// Evita sobreescribir links existentes con "#".
-const out = {};
-if (results.inf) out.informes = results.inf;
-if (results.for) out.formatos = results.for;
-if (results.cert) out.certificados = results.cert;
-return out;
+      const folder = dbFolders[folderKey] || config.google.drive.folders[folderKey] || parent;
+      
+      try {
+        const result = await this.uploadFile({
+          localPath: file.path,
+          fileName: `${empresa}_${numCert}_${serial}_${timestamp}${this.getFileExtension(file.originalname)}`,
+          mimeType: file.mimetype || "application/pdf",
+          appProperties: meta,
+          folderId: folder,
+        });
+        results[type.toLowerCase()] = result.webViewLink;
+      } catch (error) {
+        logger.error(`Failed to upload ${type} file`, error);
+        throw error;
+      }
+    });
+
+    await Promise.all(uploadPromises);
+
+    return {
+      informes: results.inf,
+      formatos: results.for,
+      certificados: results.cert,
+    };
   }
 
-  // Obtiene extensión de archivo, por defecto .pdf
+  
   getFileExtension(filename) {
     if (!filename) return ".pdf";
     const ext = filename.substring(filename.lastIndexOf("."));
@@ -278,5 +272,5 @@ return out;
   }
 }
 
-// Exporta instancia única del servicio (singleton)
+
 export const driveService = new DriveService();

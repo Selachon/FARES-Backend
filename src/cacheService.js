@@ -1,60 +1,75 @@
+// Servicio de caché en memoria con TTL (Time To Live)
+// Implementa un sistema de caché simple para reducir consultas a base de datos
 import { connect } from "./db.js";
 import { logger } from "./utils.js";
 
-// Servicio de caché en memoria con TTL (Time To Live)
 class CacheService {
   constructor() {
-    this.cache = new Map();      // Almacena datos en caché
-    this.ttl = new Map();        // Almacena tiempos de expiración
-    this.defaultTTL = 5 * 60 * 1000; // TTL por defecto: 5 minutos
+    // Map para almacenar los valores en caché
+    this.cache = new Map();
+    // Map para almacenar tiempos de expiración de cada clave
+    this.ttl = new Map();
+    // TTL por defecto: 5 minutos en milisegundos
+    this.defaultTTL = 5 * 60 * 1000;
+    // Intervalo de limpieza automática: cada 60 segundos
+    this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
   }
 
-  // Almacena un valor en caché con tiempo de expiración
+  // Almacenar un valor en caché con tiempo de vida específico
   set(key, value, ttl = this.defaultTTL) {
     this.cache.set(key, value);
-    this.ttl.set(key, Date.now() + ttl); // Timestamp de expiración
+    this.ttl.set(key, Date.now() + ttl);
   }
 
-  // Obtiene valor de caché si no ha expirado
+  // Obtener un valor de caché, verificando que no haya expirado
   get(key) {
     const expiry = this.ttl.get(key);
+    const now = Date.now();
     
-    // Si no existe o ha expirado, lo elimina y retorna null
-    if (!expiry || Date.now() > expiry) {
+    // Si no tiene fecha de expiración o ya expiró, eliminar y retornar null
+    if (!expiry || now > expiry) {
       this.cache.delete(key);
       this.ttl.delete(key);
       return null;
     }
     
+    // Retornar el valor si está vigente
     return this.cache.get(key);
   }
 
-  // Limpia caché (por clave específica o toda la caché)
   clear(key) {
     if (key) {
-      // Limpia solo una clave específica
       this.cache.delete(key);
       this.ttl.delete(key);
     } else {
-      // Limpia toda la caché
       this.cache.clear();
       this.ttl.clear();
     }
   }
 
-  // Obtiene valor de caché o ejecuta función si no existe/ha expirado
   async getOrSet(key, fetchFn, ttl = this.defaultTTL) {
     let value = this.get(key);
     
-    // Si no está en caché o ha expirado, ejecuta función y almacena resultado
     if (value === null) {
-      value = await fetchFn(); // Ejecuta función asíncrona
-      this.set(key, value, ttl); // Almacena resultado en caché
+      value = await fetchFn();
+      this.set(key, value, ttl);
     }
     
     return value;
   }
-}
 
-// Exporta instancia única del servicio (singleton)
+  cleanup() {
+    const now = Date.now();
+    for (const [key, expiry] of this.ttl.entries()) {
+      if (now > expiry) {
+        this.cache.delete(key);
+        this.ttl.delete(key);
+      }
+    }
+  }
+
+  destroy() {
+    clearInterval(this.cleanupInterval);
+  }
+}
 export const cacheService = new CacheService();

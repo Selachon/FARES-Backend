@@ -1,131 +1,166 @@
-// Cargar variables de entorno desde archivo .env
+// Archivo de configuración principal del sistema
+// Carga variables de entorno y define configuraciones para servidor, base de datos, email, Google Drive, etc.
 import dotenv from "dotenv";
 
+// Cargar variables de entorno desde archivo .env
 dotenv.config();
 
-// Configuración centralizada de toda la aplicación
+// Determinar si estamos en entorno de desarrollo local
+const LOCAL_DEV = process.env.LOCAL_DEV === "1";
+// Entorno de ejecución (development, production, etc.)
+const NODE_ENV = process.env.NODE_ENV || "development";
+
+// Objeto de configuración centralizado
 export const config = {
-  // Configuración del entorno de ejecución
-  env: process.env.NODE_ENV || "development",
-  isLocal:
-    process.env.LOCAL_DEV === "1" || process.env.NODE_ENV !== "production", // Determina si estamos en entorno local
-  isRender: String(process.env.RENDER || "").toLowerCase() === "true", // Detecta si corre en Render.com
+  // Entorno de ejecución actual
+  env: NODE_ENV,
+  // Indica si es entorno local o no producción
+  isLocal: LOCAL_DEV || NODE_ENV !== "production",
+  // Verifica si se está ejecutando en Render.com
+  isRender: String(process.env.RENDER || "").toLowerCase() === "true",
 
   // Configuración del servidor HTTP
   server: {
-    port: parseInt(process.env.PORT) || 3000, // Puerto del servidor
-    host: process.env.HOST || "0.0.0.0", // Host del servidor
+    // Puerto de escucha del servidor
+    port: parseInt(process.env.PORT) || 3000,
+    // Host donde escucha el servidor
+    host: process.env.HOST || "0.0.0.0",
   },
 
-  // Configuración de CORS para permitir solicitudes desde otros dominios
+  // Configuración de CORS para permitir peticiones cross-origin
   cors: {
+    // Orígenes permitidos para peticiones al API
     allowedOrigins: [
-      "https://faresbcs.com", // Dominio principal en producción
-      "https://www.faresbcs.com", // Subdominio www
-      "http://localhost:5173", // Frontend en desarrollo
-      ...(process.env.LOCAL_DEV === "1" ? ["http://127.0.0.1:5173"] : []), // localhost alternativo
+      "https://faresbcs.com",
+      "https://www.faresbcs.com",
+      "http://localhost:5173",
+      // Agregar localhost con IP en desarrollo local
+      ...(LOCAL_DEV ? ["http://127.0.0.1:5173"] : []),
     ],
   },
 
-  // Configuración de conexión a MongoDB
+  // Configuración de la conexión a MongoDB
   mongodb: {
-    uri: process.env.MONGODB_URI, // URL de conexión a MongoDB
-    dbName:
-      process.env.LOCAL_DEV === "1" && process.env.MONGODB_LOCAL_DB
-        ? process.env.MONGODB_LOCAL_DB // Base de datos local si está configurada
-        : "fares", // Base de datos por defecto en producción
+    // URI de conexión a la base de datos
+    uri: process.env.MONGODB_URI,
+    // Nombre de la base de datos (usa local si está definida, sino "fares")
+    dbName: LOCAL_DEV && process.env.MONGODB_LOCAL_DB
+        ? process.env.MONGODB_LOCAL_DB
+        : "fares",
+    // Opciones de conexión a MongoDB
     options: {
-      serverSelectionTimeoutMS: 8000, // Timeout para seleccionar servidor (8 segundos)
-      maxPoolSize: 10, // Máximo de conexiones en el pool
-      minPoolSize: 2, // Mínimo de conexiones mantenidas
-      maxIdleTimeMS: 30000, // Tiempo máximo que una conexión puede estar inactiva (30 seg)
-      waitQueueTimeoutMS: 5000, // Tiempo máximo en cola de espera (5 seg)
+      // Tiempo máximo para selección de servidor (8 segundos)
+      serverSelectionTimeoutMS: 8000,
+      // Tamaño máximo del pool de conexiones
+      maxPoolSize: 10,
+      // Tamaño mínimo del pool de conexiones
+      minPoolSize: 2,
+      // Tiempo máximo de inactividad de conexión (30 segundos)
+      maxIdleTimeMS: 30000,
+      // Tiempo máximo en cola de espera (5 segundos)
+      waitQueueTimeoutMS: 5000,
+      // Habilitar TLS/SSL
       tls: true,
+      // Permitir certificados TLS inválidos (para desarrollo)
       tlsAllowInvalidCertificates: true,
+      // Permitir nombres de host TLS inválidos (para desarrollo)
       tlsAllowInvalidHostnames: true,
     },
   },
 
-  // Configuración del servicio de correo electrónico (Brevo API v3)
+  // Configuración del servicio de email (Brevo/SendInBlue)
   email: {
-    host: process.env.EMAIL_HOST,                    // Servidor SMTP (legacy)
-
-    // Puerto SMTP (587 por defecto para Brevo / STARTTLS)
+    // Servidor SMTP host
+    host: process.env.EMAIL_HOST,
+    // Puerto del servidor SMTP (por defecto 587)
     port: Number(process.env.EMAIL_PORT) || 587,
-
-    // secure SOLO true si el puerto es 465 (SMTPS)
-    // Para puerto 587 con STARTTLS, secure debe ser false
-    secure:
-      process.env.EMAIL_SECURE !== undefined
+    // Conexión segura (SSL/TLS) - true si puerto 465
+    secure: process.env.EMAIL_SECURE !== undefined
         ? process.env.EMAIL_SECURE === "true"
         : Number(process.env.EMAIL_PORT) === 465,
-
-    user: process.env.EMAIL_USER,                    // Usuario SMTP (legacy)
-    pass: process.env.EMAIL_PASS,                    // Contraseña SMTP (legacy)
-
-    // Remitente y destinatario del correo
-    from: process.env.EMAIL_FROM || process.env.EMAIL_USER, // Email del remitente
-    to: process.env.EMAIL_TO || process.env.EMAIL_USER,     // Email del destinatario
-
-    // API Key de Brevo (recomendado sobre SMTP)
-    // Se usa para comunicación directa con API REST v3
-    brevoApiKey: process.env.BREVO_API_KEY,             // Clave API de Brevo
+    // Usuario del servidor SMTP
+    user: process.env.EMAIL_USER,
+    // Contraseña del servidor SMTP
+    pass: process.env.EMAIL_PASS,
+    // Email remitente (por defecto usa el usuario)
+    from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+    // Email destinatario (por defecto usa el usuario)
+    to: process.env.EMAIL_TO || process.env.EMAIL_USER,
+    // API key de Brevo para envío de correos
+    brevoApiKey: process.env.BREVO_API_KEY,
   },
 
-  // Configuración de APIs de Google
+  // Configuración de Google OAuth y Drive
   google: {
-    // Configuración de OAuth2 para autenticación
+    // Credenciales de OAuth 2.0 de Google
     oauth: {
-      clientId: process.env.GOOGLE_OAUTH_CLIENT_ID, // ID de cliente OAuth2
-      clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET, // Secreto de cliente OAuth2
-      refreshToken: process.env.GOOGLE_OAUTH_REFRESH_TOKEN, // Token de actualización OAuth2
+      // ID de cliente de la aplicación OAuth
+      clientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+      // Secreto de cliente de la aplicación OAuth
+      clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+      // Token de refresco para renovar accesos automáticamente
+      refreshToken: process.env.GOOGLE_OAUTH_REFRESH_TOKEN,
     },
-    // Configuración específica de Google Drive
+    // Configuración de Google Drive
     drive: {
-      parentFolderId: process.env.DRIVE_PARENT_FOLDER_ID, // ID de carpeta principal
+      // ID de la carpeta principal en Google Drive
+      parentFolderId: process.env.DRIVE_PARENT_FOLDER_ID,
+      // IDs de carpetas específicas para cada tipo de documento
       folders: {
-        INF: process.env.DRIVE_FOLDER_INF, // Carpeta para informes
-        FOR: process.env.DRIVE_FOLDER_FOR, // Carpeta para formatos
-        CERT: process.env.DRIVE_FOLDER_CERT, // Carpeta para certificados
+        // Carpeta para informes
+        INF: process.env.DRIVE_FOLDER_INF,
+        // Carpeta para formatos
+        FOR: process.env.DRIVE_FOLDER_FOR,
+        // Carpeta para certificados
+        CERT: process.env.DRIVE_FOLDER_CERT,
       },
+      // Configuración de permisos de compartición
       share: {
-        type: process.env.DRIVE_SHARE_TYPE || "anyone", // Tipo de compartición
-        role: process.env.DRIVE_SHARE_ROLE || "reader", // Rol de compartición
-        domain: process.env.DRIVE_DOMAIN, // Dominio (si aplica)
+        // Tipo de acceso (anyone, user, domain)
+        type: process.env.DRIVE_SHARE_TYPE || "anyone",
+        // Rol de acceso (reader, writer, commenter)
+        role: process.env.DRIVE_SHARE_ROLE || "reader",
+        // Dominio para acceso restringido (si type es domain)
+        domain: process.env.DRIVE_DOMAIN,
       },
     },
   },
 
-  // Configuración de subida de archivos
+  // Configuración para carga de archivos
   upload: {
-    dest: "uploads/", // Directorio temporal de subidas
-    maxFileSize: 10 * 1024 * 1024, // Tamaño máximo de archivo: 10MB
+    // Directorio temporal para archivos subidos
+    dest: "uploads/",
+    // Tamaño máximo de archivo (10 MB)
+    maxFileSize: 10 * 1024 * 1024,
+    // Tipos MIME permitidos para archivos
     allowedMimeTypes: [
-      // Tipos MIME permitidos
-      "application/pdf", // PDF
-      "image/jpeg", // Imágenes JPG
-      "image/png", // Imágenes PNG
-      "application/msword", // Word (.doc)
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // Word (.docx)
+      "application/pdf",                                            // Archivos PDF
+      "image/jpeg",                                                // Imágenes JPEG
+      "image/png",                                                 // Imágenes PNG
+      "application/msword",                                        // Documentos Word (.doc)
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // Documentos Word (.docx)
     ],
   },
 };
 
+// Lista de variables de entorno obligatorias para el funcionamiento del sistema
+const REQUIRED_VARS = [
+  "MONGODB_URI",                    // URI de conexión a MongoDB
+  "GOOGLE_OAUTH_CLIENT_ID",         // ID de cliente OAuth de Google
+  "GOOGLE_OAUTH_CLIENT_SECRET",     // Secreto de cliente OAuth de Google
+  "GOOGLE_OAUTH_REFRESH_TOKEN",     // Token de refresco OAuth de Google
+];
+
+// Función para validar que todas las variables de entorno requeridas estén presentes
 export const validateConfig = () => {
-  const requiredVars = [
-    "MONGODB_URI",
-    "GOOGLE_OAUTH_CLIENT_ID",
-    "GOOGLE_OAUTH_CLIENT_SECRET",
-    "GOOGLE_OAUTH_REFRESH_TOKEN",
-  ];
+  // Filtrar las variables que faltan
+  const missing = REQUIRED_VARS.filter(varName => !process.env[varName]);
 
-  const missing = requiredVars.filter((varName) => !process.env[varName]);
-
-  if (missing.length > 0) {
-    throw new Error(
-      `Missing required environment variables: ${missing.join(", ")}`,
-    );
+  // Si faltan variables, lanzar error
+  if (missing.length) {
+    throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
   }
 
+  // Si todo está correcto, retornar verdadero
   return true;
 };

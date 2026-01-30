@@ -1,121 +1,133 @@
+// Archivo de utilidades comunes del sistema
+// Contiene funciones para logging, manejo de errores, sanitización, validación y utilidades varias
 import { config } from "./config.js";
 
-// Sistema de logging centralizado para toda la aplicación
+// Función auxiliar para obtener timestamp en formato ISO
+const getTimestamp = () => new Date().toISOString();
+
+// Sistema de logging centralizado con diferentes niveles de severidad
 export const logger = {
-  // Registra mensajes informativos (operaciones exitosas, estado general)
+  // Registra mensajes informativos
   info: (message, meta = {}) => {
-    console.log(`[INFO] ${new Date().toISOString()} ${message}`, meta);
+    console.log(`[INFO] ${getTimestamp()} ${message}`, meta);
   },
   
-  // Registra errores con stack trace y contexto completo para debugging
+  // Registra mensajes de error con detalles del error
   error: (message, error = {}) => {
-    console.error(`[ERROR] ${new Date().toISOString()} ${message}`, {
+    console.error(`[ERROR] ${getTimestamp()} ${message}`, {
       message: error.message,
       stack: error.stack,
       ...error
     });
   },
   
-  // Registra advertencias (situaciones que podrían causar problemas)
+  // Registra mensajes de advertencia
   warn: (message, meta = {}) => {
-    console.warn(`[WARN] ${new Date().toISOString()} ${message}`, meta);
+    console.warn(`[WARN] ${getTimestamp()} ${message}`, meta);
   },
   
-  // Registra mensajes de debugging (solo en entorno de desarrollo)
+  // Registra mensajes de depuración (solo en desarrollo)
   debug: (message, meta = {}) => {
     if (config.env === "development") {
-      console.log(`[DEBUG] ${new Date().toISOString()} ${message}`, meta);
+      console.log(`[DEBUG] ${getTimestamp()} ${message}`, meta);
     }
   }
 };
 
-// Wrapper para manejo automático de errores asíncronos en Express
+// Middleware para manejo de funciones asíncronas en Express
+// Captura automáticamente errores y los pasa al middleware de errores
 export const asyncHandler = (fn) => {
   return (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch(next);
   };
 };
 
-// Crea errores estructurados con código HTTP y código de error personalizado
+// Crea un error personalizado con código de estado HTTP y código de error
 export const createError = (message, statusCode = 500, code = "INTERNAL_ERROR") => {
   const error = new Error(message);
-  error.statusCode = statusCode;  // Código HTTP para la respuesta
-  error.code = code;             // Código de error para el cliente
+  error.statusCode = statusCode;
+  error.code = code;
   return error;
 };
 
-// Escapa caracteres HTML para prevenir XSS en entradas de usuario
+// Escapa caracteres HTML para prevenir ataques XSS
 export const escapeHtml = (str = "") => {
-  return str
-    .replaceAll("&", "&amp;")   // Ampersand
-    .replaceAll("<", "&lt;")    // Menor que
-    .replaceAll(">", "&gt;")    // Mayor que
-    .replaceAll('"', "&quot;")  // Comillas dobles
-    .replaceAll("'", "&#039;"); // Apóstrofe
+  const htmlEscapes = {
+    '&': '&amp;',    // Ampersand
+    '<': '&lt;',     // Menor que
+    '>': '&gt;',     // Mayor que
+    '"': '&quot;',   // Comillas dobles
+    "'": '&#039;'    // Comilla simple
+  };
+  
+  return str.replace(/[&<>"']/g, char => htmlEscapes[char]);
 };
 
-// Limpia y normaliza strings (elimina espacios en blanco)
+// Sanitiza una cadena de texto eliminando espacios en blanco
 export const sanitizeString = (str) => {
   return typeof str === "string" ? str.trim() : "";
 };
 
-// Valida formato de email usando expresión regular
+// Valida formato de email usando expresión regular básica
 export const validateEmail = (email) => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email);
 };
 
-// Obtiene el primer elemento de un array si existe, null si está vacío
+// Obtiene el primer elemento de un array si existe, null si no
 export const pickFirst = (arr) => {
   return Array.isArray(arr) && arr.length > 0 ? arr[0] : null;
 };
 
-// Convierte diferentes formatos de lista de usuarios a array consistente
+// Convierte una lista de usuarios en array, manejando diferentes formatos de entrada
 export const parseUserList = (users) => {
-  if (Array.isArray(users)) return users.filter(Boolean); // Si ya es array, solo filtra nulos
+  if (Array.isArray(users)) return users.filter(Boolean);
   if (typeof users === "string") {
-    // Si es string separado por comas, convierte a array
     return users.split(",").map(u => sanitizeString(u)).filter(Boolean);
   }
-  return []; // Si es otro tipo, devuelve array vacío
+  return [];
 };
 
-// Genera nombre de archivo consistente para certificados
+// Genera nombre de archivo para certificados con formato estándar
 export const generateFileName = (empresa, numCert, serial, originalName, timestamp) => {
   const extension = originalName ? originalName.substring(originalName.lastIndexOf(".")) : ".pdf";
   return `${empresa}_${numCert}_${serial}_${timestamp}${extension}`;
 };
 
-// Sistema de reintentos automáticos para operaciones externas (ej: APIs)
-export const retryOperation = async (operation, maxRetries = 2, delay = 1000) => {
+// Función de reintento con backoff exponencial para operaciones asíncronas
+// Útil para operaciones de API que pueden fallar temporalmente (especialmente OAuth)
+export const retryOperation = async (operation, maxRetries = 2, baseDelay = 1000) => {
   let lastError;
   
-  // Intenta la operación hasta maxRetries + 1 veces
+  // Bucle de intentos desde 0 hasta maxRetries
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await operation(); // Ejecuta la operación asíncrona
+      // Intentar ejecutar la operación
+      return await operation();
     } catch (error) {
       lastError = error;
       
-      // Detecta si es error de autenticación (401/invalid_grant)
+      // Detectar si es un error de autenticación que puede resolverse con reintento
       const isAuthError = error?.response?.status === 401 || 
                          error?.response?.data?.error === "invalid_grant" ||
                          error?.errors?.[0]?.reason === "invalid_grant";
       
-      // Si no es error de auth o ya no hay más intentos, lanza el error
+      // Si es el último intento o no es error de auth, lanzar el error
       if (attempt === maxRetries || !isAuthError) {
         throw error;
       }
       
-      // Registra el intento de reintento
+      // Calcular delay de reintento (creciente)
+      const retryDelay = baseDelay * (attempt + 1);
       logger.warn(`Retry attempt ${attempt + 1}/${maxRetries + 1} after auth error`, {
         error: error.message
       });
       
-      // Espera antes de reintentar (delay incremental)
-      await new Promise(resolve => setTimeout(resolve, delay * (attempt + 1)));
+      // Esperar antes del próximo intento
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
     }
   }
   
-  throw lastError; // Lanza el último error si todos los intentos fallaron
+  // Si todos los intentos fallaron, lanzar el último error
+  throw lastError;
 };

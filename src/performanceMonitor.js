@@ -1,41 +1,40 @@
+// Monitor de rendimiento del sistema
+// Registra métricas de peticiones, tiempos de respuesta, errores y operaciones
 import { logger } from "./utils.js";
 import { performance } from "perf_hooks";
 
-// Servicio para monitoreo de rendimiento de la aplicación
 class PerformanceMonitor {
   constructor() {
+    // Inicializar estructura de métricas
     this.metrics = {
-      requests: new Map(),      // Contador de requests por ruta
-      responseTimes: [],        // Array de tiempos de respuesta
-      errorCounts: new Map(),   // Contador de errores por tipo
-      dbQueries: 0,           // Contador de consultas a BD
-      driveOperations: 0       // Contador de operaciones Drive
+      requests: new Map(),       // Contador de peticiones por ruta
+      responseTimes: [],         // Array de tiempos de respuesta
+      errorCounts: new Map(),    // Contador de errores por tipo
+      dbQueries: 0,              // Contador de consultas a BD
+      driveOperations: 0         // Contador de operaciones con Drive
     };
   }
 
-  // Inicia medición de tiempo para una request
   startRequest(req) {
     const key = `${req.method}:${req.route?.path || req.url}`;
     this.metrics.requests.set(key, (this.metrics.requests.get(key) || 0) + 1);
-    return performance.now(); // Retorna tiempo de inicio
+    return performance.now();
   }
 
-  // Finaliza medición y registra duración
   endRequest(req, startTime) {
-    const duration = performance.now() - startTime; // Calcula duración
+    const duration = performance.now() - startTime;
     this.metrics.responseTimes.push(duration);
     
-    // Mantiene solo los últimos 500 tiempos para no consumir mucha memoria
     if (this.metrics.responseTimes.length > 1000) {
       this.metrics.responseTimes = this.metrics.responseTimes.slice(-500);
     }
   }
-
-  // Registra error para métricas
+  // Registrar ocurrencia de un error en las métricas
   trackError(error, req) {
     const key = error.code || "UNKNOWN_ERROR";
     this.metrics.errorCounts.set(key, (this.metrics.errorCounts.get(key) || 0) + 1);
     
+    // Logging con detalles del error para diagnóstico
     logger.error("Performance metric: error", {
       error: error.message,
       code: error.code,
@@ -43,54 +42,53 @@ class PerformanceMonitor {
     });
   }
 
-  // Incrementa contador de consultas a base de datos
+  
+  // Incrementar contador de consultas a base de datos
   trackDbQuery() {
     this.metrics.dbQueries++;
   }
 
-  // Incrementa contador de operaciones de Google Drive
+  
+  // Incrementar contador de operaciones con Google Drive
   trackDriveOperation() {
     this.metrics.driveOperations++;
   }
 
-  // Genera reporte de métricas completo
+  
   getMetrics() {
     const responseTimes = this.metrics.responseTimes;
+    const { length } = responseTimes;
     
-    // Calcula tiempo promedio de respuesta
-    const avgResponseTime = responseTimes.length > 0 
-      ? responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length 
+    const avgResponseTime = length > 0 
+      ? responseTimes.reduce((sum, time) => sum + time, 0) / length 
       : 0;
     
-    // Calcula tiempo máximo de respuesta
-    const maxResponseTime = responseTimes.length > 0 
+    const maxResponseTime = length > 0 
       ? Math.max(...responseTimes) 
       : 0;
     
-    // Calcula percentil 95 de tiempo de respuesta
-    const p95ResponseTime = responseTimes.length > 0
-      ? responseTimes.sort((a, b) => a - b)[Math.floor(responseTimes.length * 0.95)]
+    const p95ResponseTime = length > 0
+      ? responseTimes.sort((a, b) => a - b)[Math.floor(length * 0.95)]
       : 0;
 
-    // Retorna objeto con todas las métricas del sistema
     return {
-      uptime: process.uptime(),                                   // Tiempo corriendo
-      memory: process.memoryUsage(),                               // Uso de memoria
-      requests: Object.fromEntries(this.metrics.requests),          // Conteo de requests
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      requests: Object.fromEntries(this.metrics.requests),
       responseTime: {
-        average: Math.round(avgResponseTime),    // Promedio en ms
-        max: Math.round(maxResponseTime),        // Máximo en ms
-        p95: Math.round(p95ResponseTime)        // Percentil 95 en ms
+        average: Math.round(avgResponseTime),
+        max: Math.round(maxResponseTime),
+        p95: Math.round(p95ResponseTime)
       },
-      errors: Object.fromEntries(this.metrics.errorCounts),         // Conteo de errores
+      errors: Object.fromEntries(this.metrics.errorCounts),
       operations: {
-        dbQueries: this.metrics.dbQueries,          // Consultas a BD
-        driveOperations: this.metrics.driveOperations  // Operaciones Drive
+        dbQueries: this.metrics.dbQueries,
+        driveOperations: this.metrics.driveOperations
       }
     };
   }
 
-  // Reinicia todas las métricas a cero
+  
   reset() {
     this.metrics.requests.clear();
     this.metrics.responseTimes = [];
@@ -100,5 +98,5 @@ class PerformanceMonitor {
   }
 }
 
-// Exporta instancia única del servicio (singleton)
+
 export const performanceMonitor = new PerformanceMonitor();

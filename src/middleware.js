@@ -1,45 +1,53 @@
+// Archivo de middlewares de Express
+// Contiene middlewares para CORS, logging, autorización, manejo de errores y health checks
 import { config, validateConfig } from "./config.js";
 import { logger } from "./utils.js";
 import { performanceMonitor } from "./performanceMonitor.js";
 
-// Valida que todas las variables de entorno requeridas estén presentes
+// Validar configuración al cargar el módulo
 validateConfig();
 
-// Middleware para control de CORS (Cross-Origin Resource Sharing)
+// Middleware personalizado para validación de CORS
+// Complementa al middleware CORS estándar con validación adicional y logging
 export const corsMiddleware = (req, res, next) => {
-  const origin = req.headers.origin; // Origen de la solicitud
+  const origin = req.headers.origin;
   
-  // Permite la solicitud si no hay origen o está en la lista de permitidos
+  // Permitir solicitudes sin origin (ej: herramientas API, Postman)
+  // o si el origin está en la lista de permitidos
   if (!origin || config.cors.allowedOrigins.includes(origin)) {
     return next();
   }
   
-  // En desarrollo, registra intentos bloqueados para debugging
+  // En desarrollo local, registrar solicitudes bloqueadas para debugging
   if (config.isLocal) {
     logger.warn("[CORS][BLOCKED]", { origin, method: req.method, url: req.url });
     logger.debug("[CORS][ALLOWED]", { origins: config.cors.allowedOrigins });
   }
   
-  next(); // Continúa con el siguiente middleware
+  next();
 };
 
-// Middleware para registrar y medir tiempo de respuesta de cada petición
+// Middleware para logging de peticiones HTTP
+// Registra información detallada de cada petición y su tiempo de respuesta
 export const requestLogger = (req, res, next) => {
-  const startTime = performanceMonitor.startRequest(req); // Inicia medición
+  // Iniciar monitoreo de performance para esta petición
+  const startTime = performanceMonitor.startRequest(req);
   
-  // Se ejecuta cuando la respuesta termina de enviarse
+  // Configurar callback para cuando la petición finalice
   res.on("finish", () => {
-    performanceMonitor.endRequest(req, startTime); // Finaliza medición
+    // Finalizar monitoreo de performance
+    performanceMonitor.endRequest(req, startTime);
     
+    // Preparar datos de logging
     const logData = {
-      method: req.method,      // Método HTTP (GET, POST, etc.)
-      url: req.url,          // URL solicitada
-      status: res.statusCode,  // Código de estado de respuesta
-      ip: req.ip,            // IP del cliente
-      userAgent: req.get("User-Agent") // Navegador del cliente
+      method: req.method,           // Método HTTP (GET, POST, etc.)
+      url: req.url,                 // URL de la petición
+      status: res.statusCode,       // Código de respuesta HTTP
+      ip: req.ip,                   // IP del cliente
+      userAgent: req.get("User-Agent")  // User Agent del cliente
     };
     
-    // Registra como advertencia si hay error, como información si es exitoso
+    // Logging con diferentes niveles según el código de estado
     if (res.statusCode >= 400) {
       logger.warn("HTTP Request", logData);
     } else {
@@ -47,29 +55,33 @@ export const requestLogger = (req, res, next) => {
     }
   });
   
-  next(); // Continúa con el siguiente middleware
+  next();
 };
 
-// Middleware de seguridad: restringe acceso a administradores
+// Middleware de guard para proteger rutas de administrador
+// Requiere que el header x-role sea "ADMIN" para permitir acceso
 export const adminGuard = (req, res, next) => {
-  const role = req.headers["x-role"]; // Obtiene rol desde header
+  const role = req.headers["x-role"];
   
-  // Verifica si el rol es ADMIN
+  // Verificar si el rol no existe o no es ADMIN
   if (!role || role.toUpperCase() !== "ADMIN") {
     return res.status(403).json({ 
       message: "Solo ADMIN",
-      code: "INSUFFICIENT_PERMISSIONS" // Código para el cliente
+      code: "INSUFFICIENT_PERMISSIONS"
     });
   }
   
-  next(); // Permite continuar si es administrador
+  next();
 };
 
+// Middleware de guard para proteger rutas de usuario
+// Requiere headers x-role="USER", x-user y x-empresa válidos
 export const userGuard = (req, res, next) => {
   const role = String(req.headers["x-role"] || "").toUpperCase();
   const username = String(req.headers["x-user"] || "").trim();
   const empresa = String(req.headers["x-empresa"] || "").trim();
 
+  // Validar que sea rol USER y tenga usuario y empresa
   if (role !== "USER" || !username || !empresa) {
     return res.status(403).json({
       message: "Solo USER",
@@ -77,21 +89,25 @@ export const userGuard = (req, res, next) => {
     });
   }
 
+  // Adjuntar información de usuario al request para uso posterior
   req.user = { username, empresa, role };
   next();
 };
 
 // Middleware centralizado de manejo de errores
+// Procesa todos los errores de la aplicación y envía respuestas consistentes
 export const errorHandler = (error, req, res, next) => {
+  // Determinar código de estado (default 500)
   const statusCode = error.statusCode || 500;
   const code = error.code || "INTERNAL_ERROR";
 
-  // 4xx = errores esperados (cliente), 5xx = fallas reales del servidor
+  // Determinar si es error de cliente (4xx) o servidor (5xx)
   const isClientError = statusCode >= 400 && statusCode < 500;
 
-  // Track en performance (siempre), pero el log cambia de severidad
+  // Registrar error en monitor de performance
   performanceMonitor.trackError(error, req);
 
+  // Preparar payload de logging con detalles del error y la petición
   const logPayload = {
     error: {
       message: error.message,
@@ -108,26 +124,29 @@ export const errorHandler = (error, req, res, next) => {
     },
   };
 
+  // Logging con nivel apropiado según tipo de error
   if (isClientError) {
     logger.warn("Request warning", logPayload);
   } else {
     logger.error("Request error", logPayload);
   }
 
-  // Mensaje: en 4xx SIEMPRE entrega el mensaje real (producción incluida)
-  // En 5xx: en prod manda genérico, en local manda el real
+  // Determinar mensaje de respuesta (detallado en local, genérico en producción)
   const message = isClientError
     ? error.message
     : (config.isLocal ? error.message : "Error interno del servidor");
 
+  // Enviar respuesta JSON con formato estandarizado
   res.status(statusCode).json({
     message,
     code,
+    // Incluir stack trace solo en entorno local
     ...(config.isLocal && { stack: error.stack }),
   });
 };
 
-// Manejador para rutas no encontradas (404)
+// Middleware para manejar rutas no encontradas (404)
+// Debe ser el último middleware de enrutamiento
 export const notFoundHandler = (req, res) => {
   res.status(404).json({
     message: "Ruta no encontrada",
@@ -135,25 +154,28 @@ export const notFoundHandler = (req, res) => {
   });
 };
 
-// Middleware para checks de salud del sistema
+// Middleware de health check para monitoreo de sistema
+// Verifica estado de la aplicación y conexión a base de datos
 export const healthMiddleware = async (req, res) => {
   try {
-    // Prueba conexión a la base de datos
-    const db = await import("./db.js").then(m => m.connect());
-    await db.admin().ping(); // Verifica que la BD responda
+    // Intentar conectar a la base de datos
+    const { connect } = await import("./db.js");
+    const db = await connect();
+    // Realizar ping para verificar conexión activa
+    await db.admin().ping();
     
-    // Retorna estado saludable con métricas básicas
+    // Si todo está bien, retornar estado saludable
     res.json({
       status: "healthy",
       timestamp: new Date().toISOString(),
-      uptime: process.uptime(),                     // Tiempo corriendo en segundos
-      memory: process.memoryUsage(),                // Uso de memoria
-      database: "connected"                        // Estado de la BD
+      uptime: process.uptime(),           // Tiempo que ha estado corriendo el proceso
+      memory: process.memoryUsage(),       // Uso de memoria del proceso
+      database: "connected"                // Estado de la base de datos
     });
   } catch (error) {
+    // Si algo falla, registrar error y retornar estado no saludable
     logger.error("Health check failed", error);
     
-    // Retorna estado no saludable con detalles del error
     res.status(503).json({
       status: "unhealthy",
       timestamp: new Date().toISOString(),

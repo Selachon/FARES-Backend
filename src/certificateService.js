@@ -1,3 +1,5 @@
+// Servicio de gestión de certificados
+// Maneja creación, actualización, borrado y consulta de certificados técnicos
 import { connect } from "./db.js";
 import { logger, parseUserList, createError, sanitizeString } from "./utils.js";
 import { driveService } from "./driveService.js";
@@ -6,13 +8,10 @@ import { cacheService } from "./cacheService.js";
 import { performanceMonitor } from "./performanceMonitor.js";
 import { ObjectId } from "mongodb";
 
-// Servicio para gestión de certificados del sistema
 class CertificateService {
   constructor() {
-    this.collectionName = "certificates"; // Nombre de colección en MongoDB
+    this.collectionName = "certificates";
   }
-
-  // --- Vencimiento y status ---
 
   isValidEnum(value, allowed) {
     return allowed.includes(String(value || "").trim());
@@ -25,62 +24,62 @@ class CertificateService {
     return base;
   }
 
+  // Determinar años de validez según tipo de inspección y equipo
   getYearsToExpire({ tipoInspeccion, tipoEquipo }) {
+    // Inspección parcial siempre es 1 año
     if (tipoInspeccion === "PARCIAL") return 1;
+    // Inspección total depende del tipo de equipo
     if (tipoInspeccion === "TOTAL") {
-      if (tipoEquipo === "CT") return 5;
-      if (tipoEquipo === "TE") return 10;
+      if (tipoEquipo === "CT") return 5;  // Calderas: 5 años
+      if (tipoEquipo === "TE") return 10; // Tanques: 10 años
     }
     return null;
   }
 
+  // Calcular fecha de vencimiento y estado del certificado
   computeExpiry(certificate) {
-    const tipoEquipo = certificate.tipoEquipo || null;
-    const tipoInspeccion = certificate.tipoInspeccion || null;
-
-    const baseDate = certificate.fechaCargue ? new Date(certificate.fechaCargue) : null;
+    const { tipoEquipo, tipoInspeccion, fechaCargue, status } = certificate;
+    
+    // Fecha base para cálculo (fecha de carga)
+    const baseDate = fechaCargue ? new Date(fechaCargue) : null;
     const years = this.getYearsToExpire({ tipoInspeccion, tipoEquipo });
 
+    // Si no hay fecha base o no se puede determinar años, retornar valores nulos
     if (!baseDate || !years) {
       return {
         dueDate: null,
         daysLeft: null,
         isExpiringSoon: false,
-        computedStatus: certificate.status || null,
+        computedStatus: status || null,
       };
     }
 
+    // Calcular fecha de vencimiento sumando años a la fecha base
     const due = this.addYears(baseDate, years);
-
-    // daysLeft: diferencia en días (redondeo hacia abajo)
     const now = new Date();
     const msLeft = due.getTime() - now.getTime();
-    const daysLeft = Math.floor(msLeft / (24 * 60 * 60 * 1000));
+    const daysLeft = Math.floor(msLeft / 86400000); // Convertir milisegundos a días
 
-    // Status calculado (si no está renovado)
-    const isRenewed = String(certificate.status || "").toUpperCase() === "RENOVADO";
-    let computedStatus = certificate.status || "ACTIVO";
+    // Determinar estado según si está renovado o ha vencido
+    const isRenewed = String(status || "").toUpperCase() === "RENOVADO";
+    let computedStatus = status || "ACTIVO";
     if (!isRenewed) {
       computedStatus = now > due ? "VENCIDO" : "ACTIVO";
     }
 
-    const isExpiringSoon = computedStatus === "ACTIVO" && daysLeft >= 0 && daysLeft <= 15;
-
     return {
       dueDate: due.toISOString(),
       daysLeft,
-      isExpiringSoon,
+      isExpiringSoon: computedStatus === "ACTIVO" && daysLeft >= 0 && daysLeft <= 15, // Alerta 15 días antes
       computedStatus,
     };
   }
 
 
-  // Obtiene todos los certificados (con caché para rendimiento)
+  
   async getAllCertificates() {
     try {
-      performanceMonitor.trackDbQuery(); // Registra operación BD para métricas
-
-      // Usa caché para reducir carga en base de datos
+      performanceMonitor.trackDbQuery();
       return await cacheService.getOrSet(
         "all_certificates",
         async () => {
@@ -88,13 +87,13 @@ class CertificateService {
           const certs = await db
             .collection("certificates")
             .find({})
-            .sort({ numCert: 1 }) // Ordena por número de certificado
+            .sort({ numCert: 1 })
             .toArray();
 
-          // Normaliza formato de datos para respuesta consistente
+          
           return certs.map(certificate => this.normalizeCertificate(certificate));
         },
-        5 * 60 * 1000 // Cache por 5 minutos
+        5 * 60 * 1000
       );
     } catch (error) {
       logger.error("Failed to get certificates", error);
@@ -102,21 +101,21 @@ class CertificateService {
     }
   }
 
-  // Crea nuevo certificado con archivos adjuntos
+  
   async createCertificate(certificateData, files) {
     try {
       const {
-        numCert,        // Número de certificado
-        serial,         // Número de serie
-        fechaCargue,    // Fecha de cargue
-        empresa,        // Empresa
-        assignedUsers,  // Usuarios asignados
-        resultado = "CUMPLE", // Resultado por defecto
-        tipoEquipo,        // NUEVO
-        tipoInspeccion,     // NUEVO
+        numCert,
+        serial,
+        fechaCargue,
+        empresa,
+        assignedUsers,
+        resultado = "CUMBLE",
+        tipoEquipo,
+        tipoInspeccion,
       } = certificateData;
 
-      // Valida datos básicos del certificado
+      
       const validatedData = this.validateCertificateData({
         numCert,
         serial,
@@ -126,35 +125,36 @@ class CertificateService {
         tipoInspeccion,
       });
 
-      // Verifica que los usuarios existan y pertenezcan a la empresa
+      
       await userService.validateUsersExist(validatedData.assignedUsers, validatedData.empresa);
 
-      // Prepara metadatos para archivos en Drive
+      
       const meta = {
         Usuario: validatedData.assignedUsers.join(","),
         NumCert: String(validatedData.numCert),
         Serial: String(validatedData.serial),
       };
 
-      // Sube archivos a Google Drive en paralelo
-      const uploadedLinks = await driveService.uploadCertificateFiles(
-  files,
-  meta,
-  validatedData.empresa,
-  validatedData.numCert,
-  validatedData.serial
-);
+      
+      const [uploadedLinks] = await Promise.all([
+        driveService.uploadCertificateFiles(
+          files,
+          meta,
+          validatedData.empresa,
+          validatedData.numCert,
+          validatedData.serial
+        )
+      ]);
 
-// ✅ Mantén defaults aunque no suban uno o más archivos
-const links = {
-  informes: "#",
-  formatos: "#",
-  certificados: "#",
-  ...(uploadedLinks || {}),
-};
+      const links = {
+        informes: "#",
+        formatos: "#",
+        certificados: "#",
+        ...(uploadedLinks || {}),
+      };
 
       const db = await connect();
-      // Prepara documento para inserción en base de datos
+      
       const document = {
         numCert: Number(validatedData.numCert),
         serial: validatedData.serial,
@@ -162,11 +162,11 @@ const links = {
         resultado: sanitizeString(resultado),
         empresa: sanitizeString(validatedData.empresa),
         assignedUsers: validatedData.assignedUsers,
-        tipoEquipo: validatedData.tipoEquipo,         // NUEVO
-        tipoInspeccion: validatedData.tipoInspeccion, // NUEVO
-        status: "ACTIVO",                              // NUEVO (luego se recalcula)
-        renewedAt: null,                               // NUEVO
-        links, // Enlaces a archivos en Drive
+        tipoEquipo: validatedData.tipoEquipo,
+        tipoInspeccion: validatedData.tipoInspeccion,
+        status: "ACTIVO",
+        renewedAt: null,
+        links,
         createdAt: new Date()
       };
 
@@ -174,7 +174,7 @@ const links = {
       if (computed?.computedStatus) document.status = computed.computedStatus;
 
 
-      // Inserta certificado en base de datos
+      
       const result = await db.collection("certificates").insertOne(document);
 
       logger.info("Certificate created", {
@@ -183,7 +183,7 @@ const links = {
         empresa: validatedData.empresa
       });
 
-      // Limpia caché para reflejar nuevo certificado
+      
       cacheService.clear("all_certificates");
 
       return {
@@ -221,25 +221,24 @@ const links = {
       };
 
       if (files && Object.keys(files).length > 0) {
-      const newLinks = await this.updateCertificateFiles(
-    files,
-    meta,
-    updates,
-    existing,
-    updateData
-  );
+        const newLinks = await this.updateCertificateFiles(
+          files,
+          meta,
+          updates,
+          existing,
+          updateData
+        );
 
-  // Solo mezcla links "reales" (evita pisar con "#" o null/undefined)
-  const cleanedLinks = Object.fromEntries(
-    Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
-  );
+        const cleanedLinks = Object.fromEntries(
+          Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
+        );
 
-  if (Object.keys(cleanedLinks).length > 0) {
-    updates.links = { ...existing.links, ...cleanedLinks };
-  }
-}
+        if (Object.keys(cleanedLinks).length > 0) {
+          updates.links = { ...existing.links, ...cleanedLinks };
+        }
+      }
 
-      // Calcula status dinámico si no está marcado como RENOVADO
+      
       const effective = { ...existing, ...updates };
       const computed = this.computeExpiry(effective);
 
@@ -292,7 +291,7 @@ const links = {
     }
   }
 
-  // Valida datos básicos requeridos para certificado
+  
   validateCertificateData({ numCert, serial, empresa, assignedUsers, tipoEquipo, tipoInspeccion }) {
     if (!numCert || !serial || !empresa || !assignedUsers || !tipoEquipo || !tipoInspeccion) {
       throw createError(
@@ -304,10 +303,13 @@ const links = {
     const te = String(tipoEquipo).trim().toUpperCase();
     const ti = String(tipoInspeccion).trim().toUpperCase();
 
-    if (!this.isValidEnum(te, ["TE", "CT"])) {
+    const validEquipos = ["TE", "CT"];
+    const validInspecciones = ["PARCIAL", "TOTAL"];
+
+    if (!this.isValidEnum(te, validEquipos)) {
       throw createError("tipoEquipo inválido. Usa TE o CT.", 400);
     }
-    if (!this.isValidEnum(ti, ["PARCIAL", "TOTAL"])) {
+    if (!this.isValidEnum(ti, validInspecciones)) {
       throw createError("tipoInspeccion inválido. Usa PARCIAL o TOTAL.", 400);
     }
 
@@ -322,62 +324,53 @@ const links = {
   }
 
 
-  // Construye objeto de actualizaciones permitidas para certificados
+  
   buildCertificateUpdates(existing, updateData) {
     const updates = {};
+    const validEquipos = ["TE", "CT"];
+    const validInspecciones = ["PARCIAL", "TOTAL"];
 
-    // Campos que se pueden actualizar
+    const fieldProcessors = {
+      numCert: (value) => Number(value),
+      fechaCargue: (value) => new Date(value),
+      tipoEquipo: (value) => String(value).trim().toUpperCase(),
+      tipoInspeccion: (value) => String(value).trim().toUpperCase(),
+      assignedUsers: (value) => parseUserList(value),
+      default: (value) => sanitizeString(value)
+    };
+
     const allowedFields = [
       "numCert", "serial", "fechaCargue", "empresa", "assignedUsers", "resultado",
-      "tipoEquipo", "tipoInspeccion",
-      "status" // lo aceptamos pero lo controlaremos
+      "tipoEquipo", "tipoInspeccion", "status"
     ];
 
-    allowedFields.forEach(field => {
+    for (const field of allowedFields) {
       if (updateData[field] !== undefined) {
-        if (field === "numCert") {
-          updates[field] = Number(updateData[field]); // Convierte a número
-        } else if (field === "fechaCargue") {
-          updates[field] = new Date(updateData[field]); // Convierte a Date
-        } else if (field === "tipoEquipo") {
-          updates[field] = String(updateData[field]).trim().toUpperCase();
-        } else if (field === "tipoInspeccion") {
-          updates[field] = String(updateData[field]).trim().toUpperCase();
-        } else if (field === "assignedUsers") {
-          updates[field] = parseUserList(updateData[field]); // Convierte a array
-        } else {
-          updates[field] = sanitizeString(updateData[field]); // Limpia string
-        }
+        const processor = fieldProcessors[field] || fieldProcessors.default;
+        updates[field] = processor(updateData[field]);
       }
-    });
+    }
 
-    // Normaliza/valida enums si vienen
-    if (updates.tipoEquipo && !this.isValidEnum(updates.tipoEquipo, ["TE", "CT"])) {
+    if (updates.tipoEquipo && !this.isValidEnum(updates.tipoEquipo, validEquipos)) {
       throw createError("tipoEquipo inválido. Usa TE o CT.", 400);
     }
-    if (updates.tipoInspeccion && !this.isValidEnum(updates.tipoInspeccion, ["PARCIAL", "TOTAL"])) {
+    if (updates.tipoInspeccion && !this.isValidEnum(updates.tipoInspeccion, validInspecciones)) {
       throw createError("tipoInspeccion inválido. Usa PARCIAL o TOTAL.", 400);
     }
 
-    // Renovado: el frontend enviará "renovado" boolean (recomendado)
     if (updateData.renovado !== undefined) {
-      const markRenewed =
-        String(updateData.renovado) === "true" || updateData.renovado === true;
+      const markRenewed = String(updateData.renovado) === "true" || updateData.renovado === true;
 
       if (markRenewed) {
         updates.status = "RENOVADO";
         if (!existing.renewedAt) updates.renewedAt = new Date();
       } else {
-        // ✅ Desmarcado: limpiar timestamp y SALIR de RENOVADO
         updates.renewedAt = null;
-
-        // Clave: si venía RENOVADO, lo sacamos de ese estado para que el cálculo aplique
-        updates.status = "ACTIVO"; // placeholder; se recalcula en updateCertificate
+        updates.status = "ACTIVO";
       }
     }
 
     return updates;
-
   }
 
   async updateCertificateFiles(files, meta, updates, existing, updateData) {
@@ -394,7 +387,7 @@ const links = {
     );
   }
 
-  // Normaliza formato de certificado para respuesta API consistente
+  
   normalizeCertificate(certificate) {
     const exp = this.computeExpiry(certificate);
 
@@ -409,12 +402,12 @@ const links = {
       tipoEquipo: certificate.tipoEquipo || null,
       tipoInspeccion: certificate.tipoInspeccion || null,
 
-      // status "vivo" (cambia con el tiempo si no está renovado)
+      
       status: exp?.computedStatus || certificate.status || "ACTIVO",
 
       renewedAt: certificate.renewedAt ? new Date(certificate.renewedAt).toISOString() : null,
 
-      // derivados para UI
+      
       dueDate: exp?.dueDate || null,
       daysLeft: exp?.daysLeft ?? null,
       isExpiringSoon: !!exp?.isExpiringSoon,
@@ -425,5 +418,5 @@ const links = {
 
 }
 
-// Exporta instancia única del servicio (singleton)
+
 export const certificateService = new CertificateService();

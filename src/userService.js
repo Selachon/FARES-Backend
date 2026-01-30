@@ -1,31 +1,33 @@
+// Servicio de gestión de usuarios
+// Maneja autenticación, validación, y operaciones CRUD de usuarios
 import { connect } from "./db.js";
 import bcrypt from "bcryptjs";
 import { logger, sanitizeString, parseUserList, createError } from "./utils.js";
 import { cacheService } from "./cacheService.js";
 import { performanceMonitor } from "./performanceMonitor.js";
 
-// Servicio para gestión de usuarios del sistema
 class UserService {
   constructor() {
-    this.collectionName = "users"; // Nombre de la colección en MongoDB
+    this.collectionName = "users";
   }
 
-  // Obtiene todos los usuarios sin contraseñas (con caché para rendimiento)
+  // Obtener todos los usuarios de la base de datos (sin contraseñas)
+  // Utiliza caché para optimizar rendimiento
   async getAllUsers() {
     try {
-      performanceMonitor.trackDbQuery(); // Registra operación de BD para métricas
+      performanceMonitor.trackDbQuery();
 
-      // Usa caché para reducir carga en base de datos
+      // Usar caché con patrón getOrSet para reducir consultas a BD
       return await cacheService.getOrSet(
-        "all_users", // Clave de caché
+        "all_users",
         async () => {
           const db = await connect();
+          // Obtener usuarios excluyendo el campo password por seguridad
           const users = await db
             .collection("users")
-            .find({}, { projection: { password: 0 } }) // Excluye contraseñas
+            .find({}, { projection: { password: 0 } })
             .toArray();
-
-          // Normaliza y limpia datos de usuarios
+          // Sanitizar y normalizar datos de usuarios
           return users.map((user) => ({
             ...user,
             empresa: sanitizeString(user.empresa),
@@ -33,7 +35,7 @@ class UserService {
             role: sanitizeString(user.role),
           }));
         },
-        10 * 60 * 1000, // Cache por 10 minutos
+        10 * 60 * 1000,  // TTL de 10 minutos para caché
       );
     } catch (error) {
       logger.error("Failed to get all users", error);
@@ -41,26 +43,26 @@ class UserService {
     }
   }
 
-  // Autentica usuario contra base de datos
+  
   async authenticateUser(username, password) {
     try {
-      // Validación básica de entrada
       if (!username || !password) {
         throw createError("Usuario y clave obligatorios", 400);
       }
 
+      const sanitizedUsername = sanitizeString(username);
       const db = await connect();
-      // Busca usuario por username (limpiado)
+      
       const user = await db.collection("users").findOne({
-        username: sanitizeString(username),
+        username: sanitizedUsername,
       });
 
       if (!user) {
         throw createError("Usuario no existe", 404);
       }
 
-      // Si el usuario existe pero no tiene clave asignada
-      if (!user.password || String(user.password).trim() === "") {
+      const userPassword = String(user.password || "").trim();
+      if (!userPassword) {
         logger.warn("Login attempted for user without password", {
           username: user.username,
           empresa: user.empresa,
@@ -72,17 +74,12 @@ class UserService {
         );
       }
 
-      // Verifica contraseña (con hash o texto plano para compatibilidad)
-      const isPasswordValid = await this.validatePassword(
-        password,
-        user.password,
-      );
+      const isPasswordValid = await this.validatePassword(password, userPassword);
 
       if (!isPasswordValid) {
         throw createError("Clave incorrecta", 401, "INVALID_CREDENTIALS");
       }
 
-      // Retorna datos básicos del usuario (sin contraseña)
       return {
         username: user.username,
         role: user.role,
@@ -96,7 +93,7 @@ class UserService {
     }
   }
 
-  // Valida contraseña detectando si está hasheada o en texto plano
+  
   async validatePassword(inputPassword, storedPassword) {
     if (!storedPassword || typeof storedPassword !== "string") return false;
 
@@ -108,33 +105,30 @@ class UserService {
       : inputPassword === storedPassword;
   }
 
-  // Valida que todos los usuarios existan y pertenezcan a la empresa indicada
+  
   async validateUsersExist(usernames, empresa) {
     try {
       performanceMonitor.trackDbQuery();
 
-      // Crea clave de caché única para esta validación específica
       const cacheKey = `user_validation_${usernames.join(",")}_${empresa}`;
 
       return await cacheService.getOrSet(
         cacheKey,
         async () => {
           const db = await connect();
-          // Busca todos los usuarios en una sola consulta
           const users = await db
             .collection("users")
             .find({ username: { $in: usernames } })
+            .project({ username: 1, empresa: 1 })
             .toArray();
 
           const empresaTarget = sanitizeString(empresa).toUpperCase();
 
-          // Verifica que todos los usuarios pertenezcan a la misma empresa
           const hasInvalidUser = users.some((user) => {
             const userEmpresa = sanitizeString(user.empresa).toUpperCase();
             return userEmpresa !== empresaTarget;
           });
 
-          // Si faltan usuarios o hay alguno de empresa incorrecta, lanza error
           if (users.length !== usernames.length || hasInvalidUser) {
             throw createError(
               "Los usuarios asignados deben existir y pertenecer a la Empresa seleccionada",
@@ -145,7 +139,7 @@ class UserService {
 
           return true;
         },
-        5 * 60 * 1000, // Cache por 5 minutos
+        5 * 60 * 1000,
       );
     } catch (error) {
       if (error.statusCode) throw error;
@@ -155,10 +149,9 @@ class UserService {
     }
   }
 
-  // Actualiza contraseña de usuario (convalidación completa)
+  
   async updateUserPassword(username, newPassword) {
     try {
-      // Validaciones de entrada
       if (!username || !newPassword) {
         throw createError("username y newPassword son obligatorios", 400);
       }
@@ -172,28 +165,29 @@ class UserService {
 
       performanceMonitor.trackDbQuery();
 
+      const sanitizedUsername = sanitizeString(username);
       const db = await connect();
-      // Verifica que el usuario exista
-      const user = await db.collection("users").findOne({
-        username: sanitizeString(username),
-      });
+      
+      const [user, hash] = await Promise.all([
+        db.collection("users").findOne({ username: sanitizedUsername }),
+        bcrypt.hash(newPassword, 10)
+      ]);
 
       if (!user) {
         throw createError("Usuario no existe", 404);
       }
 
-      // Crea hash seguro de la nueva contraseña
-      const hash = await bcrypt.hash(newPassword, 10);
-
-      // Actualiza contraseña en base de datos
-      await db
+      const result = await db
         .collection("users")
         .updateOne(
-          { username: sanitizeString(username) },
+          { username: sanitizedUsername },
           { $set: { password: hash, updatedAt: new Date() } },
         );
-
-      // Limpia caché de usuarios para reflejar cambios
+      
+      if (result.modifiedCount === 0) {
+        throw createError("No se pudo actualizar la clave", 500);
+      }
+      
       cacheService.clear("all_users");
       logger.info("User password updated", { username });
       return { ok: true };
@@ -205,34 +199,35 @@ class UserService {
     }
   }
 
-  // Actualiza contraseña de usuario (versión admin, sin longitud mínima)
+  
   async adminUpdateUserPassword(username, newPassword) {
     try {
-      // Validaciones de entrada
       if (!username || !newPassword) {
         throw createError("username y newPassword son obligatorios", 400);
       }
 
+      const sanitizedUsername = sanitizeString(username);
       const db = await connect();
-      // Verifica que el usuario exista
-      const user = await db.collection("users").findOne({
-        username: sanitizeString(username),
-      });
+      
+      const [user, hash] = await Promise.all([
+        db.collection("users").findOne({ username: sanitizedUsername }),
+        bcrypt.hash(newPassword, 10)
+      ]);
 
       if (!user) {
         throw createError("Usuario no existe", 404);
       }
 
-      // Crea hash seguro de la nueva contraseña
-      const hash = await bcrypt.hash(newPassword, 10);
-
-      // Actualiza contraseña en base de datos
-      await db
+      const result = await db
         .collection("users")
         .updateOne(
-          { username: sanitizeString(username) },
+          { username: sanitizedUsername },
           { $set: { password: hash, updatedAt: new Date() } },
         );
+
+      if (result.modifiedCount === 0) {
+        throw createError("No se pudo actualizar la clave", 500);
+      }
 
       logger.info("Admin updated user password", { username });
       return { ok: true };
@@ -245,5 +240,5 @@ class UserService {
   }
 }
 
-// Exporta instancia única del servicio (singleton)
+
 export const userService = new UserService();

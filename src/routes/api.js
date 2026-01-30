@@ -1,4 +1,5 @@
-// Importaciones de módulos necesarios para las rutas
+// Archivo de rutas de la API REST
+// Define todos los endpoints del sistema: auth, certificados, borradores, administración, etc.
 import express from "express";
 import multer from "multer";
 import { config } from "../config.js";
@@ -14,56 +15,33 @@ import archiver from "archiver";
 import { ObjectId } from "mongodb";
 import { driveService } from "../driveService.js";
 
-// Router de Express para agrupar todas las rutas de la API
+// Crear router principal de Express
 const router = express.Router();
 
-// Configuración de Multer para subida de archivos
+// Configurar middleware de carga de archivos con multer
 const upload = multer({
-  dest: config.upload.dest, // Directorio temporal
-  limits: { fileSize: config.upload.maxFileSize }, // Tamaño máximo: 10MB
+  dest: config.upload.dest,                    // Directorio temporal
+  limits: { fileSize: config.upload.maxFileSize },  // Límite de tamaño de archivo
 });
 
-// Rutas de salud del sistema
-router.get("/health", healthMiddleware); // Health check detallado
+router.get("/health", healthMiddleware);
 router.get(
   "/metrics",
   adminGuard,
   asyncHandler(async (req, res) => {
-    const metrics = performanceMonitor.getMetrics(); // Métricas de rendimiento
+    const metrics = performanceMonitor.getMetrics();
     res.json(metrics);
   }),
 );
 
-// Rutas públicas
 router.post(
   "/contact",
   asyncHandler(async (req, res) => {
-    // Envía email de contacto desde formulario web
     const result = await emailService.sendContactEmail(req.body);
     res.json(result);
   }),
 );
 
-// Rutas de autenticación
-router.get(
-  "/auth/users",
-  asyncHandler(async (req, res) => {
-    // Obtiene todos los usuarios del sistema
-    const users = await userService.getAllUsers();
-    res.json(users);
-  }),
-);
-
-router.post(
-  "/auth/login",
-  asyncHandler(async (req, res) => {
-    // Autentica usuario con username y password
-    const { username, password } = req.body;
-    const result = await userService.authenticateUser(username, password);
-    res.json(result);
-  }),
-);
-
 router.get(
   "/auth/users",
   asyncHandler(async (req, res) => {
@@ -81,11 +59,9 @@ router.post(
   }),
 );
 
-// Rutas de certificados
 router.get(
   "/certificates",
   asyncHandler(async (req, res) => {
-    // Obtiene todos los certificados del sistema
     const certificates = await certificateService.getAllCertificates();
     res.json(certificates);
   }),
@@ -103,21 +79,21 @@ router.post(
     }
 
     const { username, empresa } = req.user;
-    const kindPrefix = (kind) => {
-      const k = String(kind || "").toLowerCase();
-      if (k === "informes") return "INF";
-      if (k === "formatos") return "FOR";
-      if (k === "certificados") return "CER";
-      return "DOC";
+    const kindPrefixMap = {
+      informes: "INF",
+      formatos: "FOR",
+      certificados: "CER"
     };
+
+    const kindPrefix = (kind) => kindPrefixMap[String(kind || "").toLowerCase()] || "DOC";
 
     const prefixedName = (kind, originalName) => {
       const p = kindPrefix(kind);
       const n = String(originalName || "").trim() || "archivo.pdf";
-      return `${p}_${n}`; // el resto del nombre queda igual
+      return `${p}_${n}`;
     };
 
-    // Trae certificados por ID
+    
     const db = await (await import("../db.js")).connect();
     const objIds = ids.map((id) => new ObjectId(id));
     const certs = await db
@@ -131,7 +107,7 @@ router.post(
         .json({ message: "No se encontraron certificados", code: "NOT_FOUND" });
     }
 
-    // Valida pertenencia estricta
+    
     const allowed = certs.filter((c) => {
       const sameEmpresa = String(c.empresa || "") === String(empresa);
       const au = Array.isArray(c.assignedUsers) ? c.assignedUsers : [];
@@ -146,7 +122,7 @@ router.post(
       });
     }
 
-    // Construye lista por certificado: archivos existentes (no "#")
+    
     const certPayloads = allowed.map((c) => {
       const links = c.links || {};
       const candidates = [
@@ -170,34 +146,31 @@ router.post(
       };
     });
 
-    // Si seleccionó 1 registro
+    
     if (certPayloads.length === 1) {
       const one = certPayloads[0];
 
-      // Si tiene 1 archivo: se entrega tal cual (sin zip)
+      
       if (one.files.length === 1) {
         const f = one.files[0];
-        const { name, stream } = await driveService.downloadFileStream(
-          f.fileId,
-        );
+        const { name, stream } = await driveService.downloadFileStream(f.fileId);
 
         res.setHeader("Content-Type", "application/octet-stream");
         res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+        
         stream.on("error", () => {
-          // si el stream falla, cortamos
           try {
-            res.end();
+            if (!res.headersSent) res.end();
           } catch {}
         });
         return stream.pipe(res);
       }
 
-      // Si tiene 2 o 3: zip por certificado "<#> - <serial>.zip"
+      
       const zipName = `${one.numCert} - ${one.serial}.zip`;
 
       res.setHeader("Content-Type", "application/zip");
-      const outName = prefixedName(f.kind, name);
-      res.setHeader("Content-Disposition", `attachment; filename="${outName}"`);
+      res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`);
 
       const archive = archiver("zip", { zlib: { level: 9 } });
       archive.on("error", (err) => {
@@ -206,9 +179,7 @@ router.post(
       archive.pipe(res);
 
       for (const f of one.files) {
-        const { name, stream } = await driveService.downloadFileStream(
-          f.fileId,
-        );
+        const { name, stream } = await driveService.downloadFileStream(f.fileId);
         const outName = prefixedName(f.kind, name);
         archive.append(stream, { name: outName });
       }
@@ -217,7 +188,7 @@ router.post(
       return;
     }
 
-    // Si seleccionó más de 1: zip general "Certificados <EMPRESA>.zip"
+    
     const mainName = `Certificados ${empresa}.zip`;
 
     res.setHeader("Content-Type", "application/zip");
@@ -229,21 +200,16 @@ router.post(
     });
     main.pipe(res);
 
-    // Cada certificado:
-    // - si tiene 1 archivo: lo mete directo a la raíz (con nombre original)
-    // - si tiene >1: crea zip interno "<#> - <serial>.zip"
-    for (const c of certPayloads) {
+    
+    const filePromises = certPayloads.map(async (c) => {
       if (c.files.length === 1) {
         const f = c.files[0];
-        const { name, stream } = await driveService.downloadFileStream(
-          f.fileId,
-        );
+        const { name, stream } = await driveService.downloadFileStream(f.fileId);
         const outName = prefixedName(f.kind, name);
         main.append(stream, { name: outName });
       } else {
         const innerZipName = `${c.numCert} - ${c.serial}.zip`;
 
-        // Creamos un zip “virtual” como stream y lo metemos dentro del zip principal
         const inner = archiver("zip", { zlib: { level: 9 } });
         inner.on("error", (err) => {
           throw err;
@@ -252,12 +218,15 @@ router.post(
         main.append(inner, { name: innerZipName });
 
         for (const f of c.files) {
-          const { name, stream } = await driveService.downloadFileStream(
-            f.fileId,
-          );
+          const { name, stream } = await driveService.downloadFileStream(f.fileId);
           const outName = prefixedName(f.kind, name);
           inner.append(stream, { name: outName });
         }
+        await inner.finalize();
+      }
+    });
+
+    await Promise.all(filePromises);
         await inner.finalize();
       }
     }
@@ -269,24 +238,22 @@ router.post(
 router.post(
   "/certificates",
   upload.fields([
-    // Sube múltiples archivos: informes, formatos, certificados
     { name: "informes", maxCount: 1 },
     { name: "formatos", maxCount: 1 },
     { name: "certificados", maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
-    // Crea nuevo certificado con archivos adjuntos
     const certificate = await certificateService.createCertificate(
       req.body,
       req.files,
     );
-    res.status(201).json(certificate); // 201: Created
+    res.status(201).json(certificate);
   }),
 );
 
 router.put(
   "/certificates/:id",
-  adminGuard, // Solo administradores pueden actualizar
+  adminGuard,
   upload.fields([
     { name: "informes", maxCount: 1 },
     { name: "formatos", maxCount: 1 },
@@ -294,7 +261,6 @@ router.put(
   ]),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    // Actualiza certificado existente
     const certificate = await certificateService.updateCertificate(
       id,
       req.body,
@@ -308,15 +274,12 @@ router.delete(
   "/certificates/bulk",
   asyncHandler(async (req, res) => {
     const { items } = req.body;
-    // Elimina múltiples certificados en una sola operación
     const result = await certificateService.deleteCertificates(items);
     res.json(result);
   }),
 );
 
-// =====================
-// Rutas de BORRADORES (solo ADMIN)
-// =====================
+
 router.get(
   "/drafts",
   adminGuard,
@@ -331,7 +294,7 @@ router.post(
   adminGuard,
   upload.fields([
     { name: "informes", maxCount: 1 },
-    { name: "formatos", maxCount: 1 }, // FOR
+    { name: "formatos", maxCount: 1 },
     { name: "certificados", maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
@@ -375,12 +338,11 @@ router.post(
   }),
 );
 
-// Rutas de configuración (solo administradores)
+
 router.get(
   "/admin/drive-folders",
   adminGuard,
   asyncHandler(async (req, res) => {
-    // Obtiene configuración de carpetas de Drive
     const folders = await configService.getDriveFolders();
     res.json(folders);
   }),
@@ -390,7 +352,6 @@ router.put(
   "/admin/drive-folders",
   adminGuard,
   asyncHandler(async (req, res) => {
-    // Actualiza configuración de carpetas de Drive
     const folders = await configService.updateDriveFolders(req.body);
     res.json(folders);
   }),
@@ -401,19 +362,17 @@ router.get(
   adminGuard,
   asyncHandler(async (req, res) => {
     const { id } = req.query;
-    // Obtiene información de archivo en Drive
     const fileInfo = await configService.getDriveFileInfo(id);
     res.json(fileInfo);
   }),
 );
 
-// Rutas de gestión de usuarios (solo administradores)
+
 router.put(
   "/admin/users/password",
   adminGuard,
   asyncHandler(async (req, res) => {
     const { username, newPassword } = req.body;
-    // Actualiza contraseña de usuario (admin)
     const result = await userService.adminUpdateUserPassword(
       username,
       newPassword,
@@ -428,11 +387,10 @@ router.put(
   asyncHandler(async (req, res) => {
     const { username } = req.params;
     const { newPassword } = req.body;
-    // Actualiza contraseña de usuario (con validación)
     const result = await userService.updateUserPassword(username, newPassword);
     res.json(result);
   }),
 );
 
-// Exporta el router para ser usado en el servidor principal
+
 export default router;
