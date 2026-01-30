@@ -261,11 +261,13 @@ class DriveService {
     );
 
     // Retorna objeto con los enlaces de todos los archivos
-    return {
-      informes: results.inf || "#",
-      formatos: results.for || "#",
-      certificados: results.cert || "#",
-    };
+    // ✅ Devuelve SOLO los links que realmente se subieron.
+// Evita sobreescribir links existentes con "#".
+const out = {};
+if (results.inf) out.informes = results.inf;
+if (results.for) out.formatos = results.for;
+if (results.cert) out.certificados = results.cert;
+return out;
   }
 
   // Obtiene extensión de archivo, por defecto .pdf

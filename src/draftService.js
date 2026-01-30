@@ -108,14 +108,19 @@ class DraftService {
         };
 
         const newLinks = await driveService.uploadCertificateFiles(
-          files,
-          meta,
-          doc.empresa || "DRAFT",
-          doc.numCert || "DRAFT",
-          doc.serial || "DRAFT",
-        );
+  files,
+  meta,
+  doc.empresa || "DRAFT",
+  doc.numCert || "DRAFT",
+  doc.serial || "DRAFT",
+);
 
-        doc.links = { ...(doc.links || {}), ...newLinks };
+// ✅ No pisar links existentes con "#"
+const cleanedLinks = Object.fromEntries(
+  Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
+);
+
+doc.links = { ...(doc.links || {}), ...cleanedLinks };
       }
 
       if (doc.localId) {
@@ -229,14 +234,21 @@ class DraftService {
         };
 
         const newLinks = await driveService.uploadCertificateFiles(
-          files,
-          meta,
-          effective.empresa || "DRAFT",
-          effective.numCert || "DRAFT",
-          effective.serial || "DRAFT",
-        );
+  files,
+  meta,
+  effective.empresa || "DRAFT",
+  effective.numCert || "DRAFT",
+  effective.serial || "DRAFT",
+);
 
-        updates.links = { ...(existing.links || {}), ...newLinks };
+// ✅ No pisar links existentes con "#"
+const cleanedLinks = Object.fromEntries(
+  Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
+);
+
+if (Object.keys(cleanedLinks).length > 0) {
+  updates.links = { ...(existing.links || {}), ...cleanedLinks };
+}
       }
 
       await db

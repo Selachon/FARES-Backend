@@ -137,13 +137,21 @@ class CertificateService {
       };
 
       // Sube archivos a Google Drive en paralelo
-      const links = await driveService.uploadCertificateFiles(
-        files,
-        meta,
-        validatedData.empresa,
-        validatedData.numCert,
-        validatedData.serial
-      );
+      const uploadedLinks = await driveService.uploadCertificateFiles(
+  files,
+  meta,
+  validatedData.empresa,
+  validatedData.numCert,
+  validatedData.serial
+);
+
+// ✅ Mantén defaults aunque no suban uno o más archivos
+const links = {
+  informes: "#",
+  formatos: "#",
+  certificados: "#",
+  ...(uploadedLinks || {}),
+};
 
       const db = await connect();
       // Prepara documento para inserción en base de datos
@@ -212,16 +220,24 @@ class CertificateService {
         Serial: String(updates.serial || existing.serial),
       };
 
-      if (Object.keys(files).length > 0) {
-        const newLinks = await this.updateCertificateFiles(
-          files,
-          meta,
-          updates,
-          existing,
-          updateData
-        );
-        updates.links = { ...existing.links, ...newLinks };
-      }
+      if (files && Object.keys(files).length > 0) {
+      const newLinks = await this.updateCertificateFiles(
+    files,
+    meta,
+    updates,
+    existing,
+    updateData
+  );
+
+  // Solo mezcla links "reales" (evita pisar con "#" o null/undefined)
+  const cleanedLinks = Object.fromEntries(
+    Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
+  );
+
+  if (Object.keys(cleanedLinks).length > 0) {
+    updates.links = { ...existing.links, ...cleanedLinks };
+  }
+}
 
       // Calcula status dinámico si no está marcado como RENOVADO
       const effective = { ...existing, ...updates };
