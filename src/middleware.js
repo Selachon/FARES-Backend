@@ -154,6 +154,25 @@ export const notFoundHandler = (req, res) => {
   });
 };
 
+// Middleware de guard para la app móvil offline
+// Requiere header x-app-key con clave de API válida
+export const appGuard = (req, res, next) => {
+  const appKey = req.headers["x-app-key"];
+  
+  // Verificar clave de API para la app móvil
+  // En producción esta clave debería estar en variables de entorno
+  const validAppKey = process.env.APP_API_KEY || "FARES_MOBILE_APP_2024";
+  
+  if (!appKey || appKey !== validAppKey) {
+    return res.status(403).json({ 
+      message: "Clave de API inválida",
+      code: "INVALID_APP_KEY"
+    });
+  }
+  
+  next();
+};
+
 // Middleware de health check para monitoreo de sistema
 // Verifica estado de la aplicación y conexión a base de datos
 export const healthMiddleware = async (req, res) => {

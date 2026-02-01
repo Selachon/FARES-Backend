@@ -9,7 +9,7 @@ import { userService } from "../userService.js";
 import { certificateService } from "../certificateService.js";
 import { configService } from "../configService.js";
 import { draftService } from "../draftService.js";
-import { adminGuard, healthMiddleware, userGuard } from "../middleware.js";
+import { adminGuard, healthMiddleware, userGuard, appGuard } from "../middleware.js";
 import { performanceMonitor } from "../performanceMonitor.js";
 import archiver from "archiver";
 import { ObjectId } from "mongodb";
@@ -335,6 +335,39 @@ router.post(
   }),
 );
 
+// ============================================================
+// MOBILE APP ENDPOINTS
+// Endpoints específicos para la aplicación móvil offline
+// Usa appGuard en lugar de adminGuard para autenticación simple
+// ============================================================
+
+router.post(
+  "/app/drafts",
+  appGuard,
+  upload.fields([
+    { name: "informes", maxCount: 1 },
+    { name: "formatos", maxCount: 1 },
+    { name: "certificados", maxCount: 1 },
+  ]),
+  asyncHandler(async (req, res) => {
+    // Create draft from mobile app
+    // The PDF informe will be uploaded automatically
+    const draft = await draftService.createDraft(req.body, req.files || {});
+    res.status(201).json(draft);
+  }),
+);
+
+router.get(
+  "/app/health",
+  asyncHandler(async (req, res) => {
+    // Simple health check for mobile app
+    res.json({ 
+      status: "ok", 
+      timestamp: new Date().toISOString(),
+      version: "1.0.0"
+    });
+  }),
+);
 
 router.get(
   "/admin/drive-folders",
