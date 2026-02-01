@@ -14,6 +14,13 @@ import { performanceMonitor } from "../performanceMonitor.js";
 import archiver from "archiver";
 import { ObjectId } from "mongodb";
 import { driveService } from "../driveService.js";
+import { excelService } from "../excelService.js";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Crear router principal de Express
 const router = express.Router();
@@ -344,15 +351,52 @@ router.post(
 router.post(
   "/app/drafts",
   appGuard,
-  upload.fields([
-    { name: "informes", maxCount: 1 },
-    { name: "formatos", maxCount: 1 },
-    { name: "certificados", maxCount: 1 },
-  ]),
   asyncHandler(async (req, res) => {
-    // Create draft from mobile app
-    // The PDF informe will be uploaded automatically
-    const draft = await draftService.createDraft(req.body, req.files || {});
+    // Receive full inspection data from mobile app
+    const { inspeccionCompleta, ...draftData } = req.body;
+
+    if (!inspeccionCompleta) {
+      return res.status(400).json({
+        message: "inspeccionCompleta es requerido",
+        code: "MISSING_INSPECTION_DATA"
+      });
+    }
+
+    // Parse if it comes as string
+    const inspectionData = typeof inspeccionCompleta === 'string' 
+      ? JSON.parse(inspeccionCompleta) 
+      : inspeccionCompleta;
+
+    // 1. Fill Excel template
+    const workbook = await excelService.fillTemplate(inspectionData);
+
+    // 2. Save Excel to temp file
+    const tempDir = path.join(__dirname, '..', 'uploads');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+    const timestamp = Date.now();
+    const excelPath = path.join(tempDir, `inspection_${timestamp}.xlsx`);
+    await excelService.saveWorkbook(workbook, excelPath);
+
+    // 3. Create files object for draft service
+    const files = {
+      formatos: [{
+        path: excelPath,
+        originalname: `${draftData.serial || 'INSPECCION'}_${timestamp}.xlsx`,
+        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      }]
+    };
+
+    // 4. Create draft with the Excel file
+    const draft = await draftService.createDraft(draftData, files);
+
+    // 5. Cleanup temp file
+    try {
+      fs.unlinkSync(excelPath);
+    } catch (err) {
+      // Ignore cleanup errors
+    }
+
     res.status(201).json(draft);
   }),
 );
