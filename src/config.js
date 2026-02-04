@@ -152,8 +152,8 @@ export const config = {
     cookie: {
       name: "fares_session",
       httpOnly: true,
-      secure: NODE_ENV === "production",
-      sameSite: "strict",
+      secure: !LOCAL_DEV && NODE_ENV === "production",
+      sameSite: LOCAL_DEV ? "lax" : "none",
       maxAge: 24 * 60 * 60 * 1000, // 24 horas en milisegundos
     },
   },
