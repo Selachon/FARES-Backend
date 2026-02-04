@@ -3,6 +3,8 @@
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
+import helmet from "helmet";
+import cookieParser from "cookie-parser";
 import { config } from "./config.js";
 import { logger } from "./utils.js";
 import { 
@@ -17,6 +19,12 @@ import apiRoutes from "./routes/api.js";
 // Crear instancia de aplicación Express
 const app = express();
 
+// Aplicar helmet para headers de seguridad
+app.use(helmet({
+  contentSecurityPolicy: config.env === "production" ? undefined : false,
+  crossOriginEmbedderPolicy: false,
+}));
+
 // Configurar middleware CORS global
 app.use(cors({
   origin: config.cors.allowedOrigins,  // Orígenes permitidos desde config
@@ -27,6 +35,8 @@ app.options("*", cors());
 
 // Aplicar middleware personalizado de CORS (validación adicional)
 app.use(corsMiddleware);
+// Middleware para parsear cookies
+app.use(cookieParser());
 // Middleware para parsear JSON con límite de 10MB
 app.use(express.json({ limit: "10mb" }));
 // Middleware para parsear form data URL-encoded con límite de 10MB

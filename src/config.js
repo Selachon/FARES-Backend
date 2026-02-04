@@ -141,6 +141,28 @@ export const config = {
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // Documentos Word (.docx)
     ],
   },
+
+  // Configuración de autenticación JWT
+  jwt: {
+    // Secreto para firmar tokens JWT (DEBE estar en .env)
+    secret: process.env.JWT_SECRET,
+    // Tiempo de expiración del token (24 horas)
+    expiresIn: "24h",
+    // Configuración de cookie
+    cookie: {
+      name: "fares_session",
+      httpOnly: true,
+      secure: NODE_ENV === "production",
+      sameSite: "strict",
+      maxAge: 24 * 60 * 60 * 1000, // 24 horas en milisegundos
+    },
+  },
+
+  // Configuración de seguridad
+  security: {
+    // Clave API para app móvil (DEBE estar en .env, sin fallback)
+    appApiKey: process.env.APP_API_KEY,
+  },
 };
 
 // Lista de variables de entorno obligatorias para el funcionamiento del sistema
@@ -149,6 +171,8 @@ const REQUIRED_VARS = [
   "GOOGLE_OAUTH_CLIENT_ID",         // ID de cliente OAuth de Google
   "GOOGLE_OAUTH_CLIENT_SECRET",     // Secreto de cliente OAuth de Google
   "GOOGLE_OAUTH_REFRESH_TOKEN",     // Token de refresco OAuth de Google
+  "JWT_SECRET",                     // Secreto para firmar tokens JWT
+  "APP_API_KEY",                    // Clave API para app móvil
 ];
 
 // Función para validar que todas las variables de entorno requeridas estén presentes

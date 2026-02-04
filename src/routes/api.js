@@ -2,6 +2,8 @@
 // Define todos los endpoints del sistema: auth, certificados, borradores, administración, etc.
 import express from "express";
 import multer from "multer";
+import rateLimit from "express-rate-limit";
+import jwt from "jsonwebtoken";
 import { config } from "../config.js";
 import { asyncHandler } from "../utils.js";
 import { emailService } from "../emailService.js";
@@ -9,8 +11,9 @@ import { userService } from "../userService.js";
 import { certificateService } from "../certificateService.js";
 import { configService } from "../configService.js";
 import { draftService } from "../draftService.js";
-import { adminGuard, healthMiddleware, userGuard, appGuard } from "../middleware.js";
+import { adminGuard, healthMiddleware, userGuard, appGuard, authenticate } from "../middleware.js";
 import { performanceMonitor } from "../performanceMonitor.js";
+import { connect } from "../db.js";
 import archiver from "archiver";
 import { ObjectId } from "mongodb";
 import { driveService } from "../driveService.js";
@@ -24,6 +27,18 @@ const __dirname = path.dirname(__filename);
 
 // Crear router principal de Express
 const router = express.Router();
+
+// Rate limiter para login (5 intentos por 15 minutos)
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 5, // 5 intentos
+  message: {
+    message: "Demasiados intentos de inicio de sesión. Intenta nuevamente en 15 minutos.",
+    code: "TOO_MANY_REQUESTS"
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Configurar middleware de carga de archivos con multer
 const upload = multer({
@@ -51,6 +66,7 @@ router.post(
 
 router.get(
   "/auth/users",
+  authenticate,
   asyncHandler(async (req, res) => {
     const users = await userService.getAllUsers();
     res.json(users);
@@ -59,15 +75,47 @@ router.get(
 
 router.post(
   "/auth/login",
+  loginLimiter,
   asyncHandler(async (req, res) => {
     const { username, password } = req.body;
-    const result = await userService.authenticateUser(username, password);
-    res.json(result);
+    const user = await userService.authenticateUser(username, password);
+    
+    // Crear token JWT
+    const token = jwt.sign(
+      {
+        username: user.username,
+        role: user.role,
+        empresa: user.empresa
+      },
+      config.jwt.secret,
+      { expiresIn: config.jwt.expiresIn }
+    );
+    
+    // Establecer cookie httpOnly
+    res.cookie(config.jwt.cookie.name, token, {
+      httpOnly: config.jwt.cookie.httpOnly,
+      secure: config.jwt.cookie.secure,
+      sameSite: config.jwt.cookie.sameSite,
+      maxAge: config.jwt.cookie.maxAge
+    });
+    
+    // Retornar datos del usuario (sin token en body)
+    res.json(user);
+  }),
+);
+
+router.post(
+  "/auth/logout",
+  asyncHandler(async (req, res) => {
+    // Limpiar cookie de sesión
+    res.clearCookie(config.jwt.cookie.name);
+    res.json({ message: "Sesión cerrada exitosamente" });
   }),
 );
 
 router.get(
   "/certificates",
+  authenticate,
   asyncHandler(async (req, res) => {
     const certificates = await certificateService.getAllCertificates();
     res.json(certificates);
@@ -101,7 +149,7 @@ router.post(
     };
 
     
-    const db = await (await import("../db.js")).connect();
+    const db = await connect();
     const objIds = ids.map((id) => new ObjectId(id));
     const certs = await db
       .collection("certificates")
@@ -165,11 +213,14 @@ router.post(
         res.setHeader("Content-Type", "application/octet-stream");
         res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
         
-        stream.on("error", () => {
-          try {
-            if (!res.headersSent) res.end();
-          } catch {}
+        stream.on("error", (err) => {
+          logger.error("Stream error in download", err);
+          stream.destroy();
+          if (!res.headersSent) {
+            res.status(500).json({ message: "Error descargando archivo", code: "DOWNLOAD_ERROR" });
+          }
         });
+        res.on("close", () => stream.destroy());
         return stream.pipe(res);
       }
 
@@ -241,6 +292,7 @@ router.post(
 
 router.post(
   "/certificates",
+  adminGuard,
   upload.fields([
     { name: "informes", maxCount: 1 },
     { name: "formatos", maxCount: 1 },
@@ -276,6 +328,7 @@ router.put(
 
 router.delete(
   "/certificates/bulk",
+  adminGuard,
   asyncHandler(async (req, res) => {
     const { items } = req.body;
     const result = await certificateService.deleteCertificates(items);
@@ -362,10 +415,26 @@ router.post(
       });
     }
 
+    // Validar campos básicos de draftData
+    if (!draftData.serial || !draftData.empresa) {
+      return res.status(400).json({
+        message: "serial y empresa son requeridos",
+        code: "MISSING_REQUIRED_FIELDS"
+      });
+    }
+
     // Parse if it comes as string
-    const inspectionData = typeof inspeccionCompleta === 'string' 
-      ? JSON.parse(inspeccionCompleta) 
-      : inspeccionCompleta;
+    let inspectionData;
+    try {
+      inspectionData = typeof inspeccionCompleta === 'string' 
+        ? JSON.parse(inspeccionCompleta) 
+        : inspeccionCompleta;
+    } catch (err) {
+      return res.status(400).json({
+        message: "inspeccionCompleta tiene formato inválido",
+        code: "INVALID_JSON_FORMAT"
+      });
+    }
 
     // 1. Fill Excel template
     const workbook = await excelService.fillTemplate(inspectionData);

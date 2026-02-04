@@ -19,6 +19,11 @@ class ExcelService {
    */
   async fillTemplate(data) {
     try {
+      logger.info('Starting Excel template fill', { 
+        serial: data.informacionItem?.numeroSerie,
+        cliente: data.datosCliente?.cliente 
+      });
+      
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.readFile(this.templatePath);
 

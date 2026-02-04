@@ -10,18 +10,9 @@ let client, db;
 // Función principal para conectar a la base de datos MongoDB
 // Implementa patrón singleton para reutilizar la conexión existente
 export async function connect() {
-  // Si ya existe una conexión, verificar si sigue activa
+  // Si ya existe una conexión, retornarla (el driver maneja reconexión automáticamente)
   if (db) {
-    try {
-      // Realizar ping para verificar conexión
-      await db.admin().ping();
-      return db;
-    } catch (error) {
-      // Si falla el ping, limpiar variables para reconectar
-      logger.warn("Database connection lost, reconnecting", { error: error.message });
-      db = null;
-      client = null;
-    }
+    return db;
   }
 
   try {

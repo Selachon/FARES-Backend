@@ -3,6 +3,7 @@
 import { config, validateConfig } from "./config.js";
 import { logger } from "./utils.js";
 import { performanceMonitor } from "./performanceMonitor.js";
+import jwt from "jsonwebtoken";
 
 // Validar configuración al cargar el módulo
 validateConfig();
@@ -58,40 +59,77 @@ export const requestLogger = (req, res, next) => {
   next();
 };
 
-// Middleware de guard para proteger rutas de administrador
-// Requiere que el header x-role sea "ADMIN" para permitir acceso
-export const adminGuard = (req, res, next) => {
-  const role = req.headers["x-role"];
-  
-  // Verificar si el rol no existe o no es ADMIN
-  if (!role || role.toUpperCase() !== "ADMIN") {
-    return res.status(403).json({ 
-      message: "Solo ADMIN",
-      code: "INSUFFICIENT_PERMISSIONS"
+// Middleware de autenticación JWT
+// Valida el token JWT de la cookie y extrae los datos del usuario
+export const authenticate = (req, res, next) => {
+  try {
+    // Obtener token de la cookie
+    const token = req.cookies?.[config.jwt.cookie.name];
+    
+    if (!token) {
+      return res.status(401).json({
+        message: "No autenticado",
+        code: "UNAUTHORIZED"
+      });
+    }
+
+    // Verificar y decodificar el token
+    const decoded = jwt.verify(token, config.jwt.secret);
+    
+    // Adjuntar información del usuario al request
+    req.user = {
+      username: decoded.username,
+      role: decoded.role,
+      empresa: decoded.empresa
+    };
+    
+    next();
+  } catch (error) {
+    // Token inválido o expirado
+    logger.warn("JWT verification failed", { error: error.message });
+    return res.status(401).json({
+      message: "Sesión inválida o expirada",
+      code: "INVALID_TOKEN"
     });
   }
-  
-  next();
+};
+
+// Middleware de guard para proteger rutas de administrador
+// Requiere autenticación JWT con rol ADMIN
+export const adminGuard = (req, res, next) => {
+  // Primero autenticar
+  authenticate(req, res, (err) => {
+    if (err) return;
+    
+    // Verificar rol ADMIN
+    if (req.user.role?.toUpperCase() !== "ADMIN") {
+      return res.status(403).json({ 
+        message: "Solo ADMIN",
+        code: "INSUFFICIENT_PERMISSIONS"
+      });
+    }
+    
+    next();
+  });
 };
 
 // Middleware de guard para proteger rutas de usuario
-// Requiere headers x-role="USER", x-user y x-empresa válidos
+// Requiere autenticación JWT con rol USER
 export const userGuard = (req, res, next) => {
-  const role = String(req.headers["x-role"] || "").toUpperCase();
-  const username = String(req.headers["x-user"] || "").trim();
-  const empresa = String(req.headers["x-empresa"] || "").trim();
-
-  // Validar que sea rol USER y tenga usuario y empresa
-  if (role !== "USER" || !username || !empresa) {
-    return res.status(403).json({
-      message: "Solo USER",
-      code: "INSUFFICIENT_PERMISSIONS",
-    });
-  }
-
-  // Adjuntar información de usuario al request para uso posterior
-  req.user = { username, empresa, role };
-  next();
+  // Primero autenticar
+  authenticate(req, res, (err) => {
+    if (err) return;
+    
+    // Verificar rol USER
+    if (req.user.role?.toUpperCase() !== "USER") {
+      return res.status(403).json({
+        message: "Solo USER",
+        code: "INSUFFICIENT_PERMISSIONS",
+      });
+    }
+    
+    next();
+  });
 };
 
 // Middleware centralizado de manejo de errores
@@ -159,11 +197,8 @@ export const notFoundHandler = (req, res) => {
 export const appGuard = (req, res, next) => {
   const appKey = req.headers["x-app-key"];
   
-  // Verificar clave de API para la app móvil
-  // En producción esta clave debería estar en variables de entorno
-  const validAppKey = process.env.APP_API_KEY || "FARES_MOBILE_APP_2024";
-  
-  if (!appKey || appKey !== validAppKey) {
+  // Verificar clave de API para la app móvil (sin fallback hardcodeado)
+  if (!appKey || appKey !== config.security.appApiKey) {
     return res.status(403).json({ 
       message: "Clave de API inválida",
       code: "INVALID_APP_KEY"

@@ -11,12 +11,24 @@ class CacheService {
     this.ttl = new Map();
     // TTL por defecto: 5 minutos en milisegundos
     this.defaultTTL = 5 * 60 * 1000;
+    // Límite máximo de entradas en caché (previene crecimiento ilimitado)
+    this.maxEntries = 100;
     // Intervalo de limpieza automática: cada 60 segundos
     this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
   }
 
   // Almacenar un valor en caché con tiempo de vida específico
   set(key, value, ttl = this.defaultTTL) {
+    // Si excede límite, limpiar entradas expiradas primero
+    if (this.cache.size >= this.maxEntries) {
+      this.cleanup();
+      // Si aún excede límite, eliminar entrada más antigua
+      if (this.cache.size >= this.maxEntries) {
+        const oldestKey = this.cache.keys().next().value;
+        this.cache.delete(oldestKey);
+        this.ttl.delete(oldestKey);
+      }
+    }
     this.cache.set(key, value);
     this.ttl.set(key, Date.now() + ttl);
   }

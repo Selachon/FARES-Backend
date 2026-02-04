@@ -57,8 +57,13 @@ class UserService {
         username: sanitizedUsername,
       });
 
+      // Mensaje genérico para prevenir enumeración de usuarios
+      const genericError = createError("Credenciales inválidas", 401, "INVALID_CREDENTIALS");
+
       if (!user) {
-        throw createError("Usuario no existe", 404);
+        // Ejecutar bcrypt compare con hash dummy para prevenir timing attack
+        await bcrypt.compare(password, "$2b$10$dummyhashtopreventtimingattack1234567890");
+        throw genericError;
       }
 
       const userPassword = String(user.password || "").trim();
@@ -67,17 +72,15 @@ class UserService {
           username: user.username,
           empresa: user.empresa,
         });
-        throw createError(
-          "El usuario no tiene clave. Solicítela al personal de FARES.",
-          401,
-          "NO_PASSWORD",
-        );
+        // Ejecutar bcrypt compare con hash dummy
+        await bcrypt.compare(password, "$2b$10$dummyhashtopreventtimingattack1234567890");
+        throw genericError;
       }
 
       const isPasswordValid = await this.validatePassword(password, userPassword);
 
       if (!isPasswordValid) {
-        throw createError("Clave incorrecta", 401, "INVALID_CREDENTIALS");
+        throw genericError;
       }
 
       return {
@@ -97,12 +100,18 @@ class UserService {
   async validatePassword(inputPassword, storedPassword) {
     if (!storedPassword || typeof storedPassword !== "string") return false;
 
+    // Solo aceptar contraseñas hasheadas con bcrypt
     const looksHashed =
       storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$");
 
-    return looksHashed
-      ? await bcrypt.compare(inputPassword, storedPassword)
-      : inputPassword === storedPassword;
+    if (!looksHashed) {
+      logger.error("Attempted login with non-bcrypt password", {
+        passwordPrefix: storedPassword.substring(0, 4)
+      });
+      return false;
+    }
+
+    return await bcrypt.compare(inputPassword, storedPassword);
   }
 
   
@@ -156,9 +165,9 @@ class UserService {
         throw createError("username y newPassword son obligatorios", 400);
       }
 
-      if (newPassword.length < 4) {
+      if (newPassword.length < 8) {
         throw createError(
-          "La nueva clave debe tener al menos 4 caracteres",
+          "La nueva clave debe tener al menos 8 caracteres",
           400,
         );
       }
