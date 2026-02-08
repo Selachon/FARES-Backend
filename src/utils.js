@@ -64,8 +64,20 @@ export const escapeHtml = (str = "") => {
 };
 
 // Sanitiza una cadena de texto eliminando espacios en blanco
+// Rechaza cualquier valor que no sea string primitivo (previene NoSQL injection con objetos como {$gt:""})
 export const sanitizeString = (str) => {
-  return typeof str === "string" ? str.trim() : "";
+  if (typeof str !== "string") return "";
+  return str.trim();
+};
+
+// Sanitiza un valor para uso seguro en queries MongoDB
+// Rechaza cualquier valor que no sea string/number primitivo (previene operadores NoSQL como {$gt:""})
+export const mongoSafeValue = (val) => {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "number" && Number.isFinite(val)) return val;
+  if (typeof val === "string") return val.trim();
+  // Objetos, arrays, funciones → rechazados
+  return "";
 };
 
 // Valida formato de email usando expresión regular básica

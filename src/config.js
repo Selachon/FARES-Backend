@@ -61,10 +61,11 @@ export const config = {
       waitQueueTimeoutMS: 5000,
       // Habilitar TLS/SSL
       tls: true,
-      // Permitir certificados TLS inválidos (para desarrollo)
-      tlsAllowInvalidCertificates: true,
-      // Permitir nombres de host TLS inválidos (para desarrollo)
-      tlsAllowInvalidHostnames: true,
+      // Solo permitir certificados TLS inválidos en desarrollo local
+      ...(LOCAL_DEV && {
+        tlsAllowInvalidCertificates: true,
+        tlsAllowInvalidHostnames: true,
+      }),
     },
   },
 

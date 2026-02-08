@@ -156,7 +156,11 @@ export const errorHandler = (error, req, res, next) => {
     request: {
       method: req.method,
       url: req.url,
-      body: req.body,
+      body: req.body ? Object.fromEntries(
+        Object.entries(req.body).map(([k, v]) =>
+          /password|clave|secret|token/i.test(k) ? [k, "[REDACTED]"] : [k, v]
+        )
+      ) : undefined,
       params: req.params,
       query: req.query,
     },
@@ -222,9 +226,7 @@ export const healthMiddleware = async (req, res) => {
     res.json({
       status: "healthy",
       timestamp: new Date().toISOString(),
-      uptime: process.uptime(),           // Tiempo que ha estado corriendo el proceso
-      memory: process.memoryUsage(),       // Uso de memoria del proceso
-      database: "connected"                // Estado de la base de datos
+      database: "connected"
     });
   } catch (error) {
     // Si algo falla, registrar error y retornar estado no saludable

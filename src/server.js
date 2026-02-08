@@ -5,6 +5,7 @@ import cors from "cors";
 import morgan from "morgan";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
+import rateLimit from "express-rate-limit";
 import { config } from "./config.js";
 import { logger } from "./utils.js";
 import { 
@@ -45,6 +46,15 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(morgan(config.env === "production" ? "combined" : "dev"));
 // Middleware personalizado de logging de peticiones
 app.use(requestLogger);
+
+// Rate limiter global: 200 peticiones por IP por minuto (protege contra DDoS/scraping)
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Demasiadas solicitudes, intenta más tarde", code: "TOO_MANY_REQUESTS" },
+}));
 
 // Rutas básicas
 app.get("/", (_, res) => res.status(200).send("OK"));  // Endpoint de verificación simple

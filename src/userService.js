@@ -105,9 +105,7 @@ class UserService {
       storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$");
 
     if (!looksHashed) {
-      logger.error("Attempted login with non-bcrypt password", {
-        passwordPrefix: storedPassword.substring(0, 4)
-      });
+      logger.error("Attempted login with non-bcrypt password");
       return false;
     }
 
@@ -213,6 +211,10 @@ class UserService {
     try {
       if (!username || !newPassword) {
         throw createError("username y newPassword son obligatorios", 400);
+      }
+
+      if (typeof newPassword !== "string" || newPassword.length < 8) {
+        throw createError("La contraseña debe tener al menos 8 caracteres", 400);
       }
 
       const sanitizedUsername = sanitizeString(username);

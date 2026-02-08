@@ -41,10 +41,29 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Configurar middleware de carga de archivos con multer
+// Rate limiter para el formulario de contacto (3 por hora)
+const contactLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  message: {
+    message: "Demasiados mensajes de contacto. Intenta nuevamente en 1 hora.",
+    code: "TOO_MANY_REQUESTS"
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Configurar middleware de carga de archivos con multer + validación MIME
 const upload = multer({
-  dest: config.upload.dest,                    // Directorio temporal
-  limits: { fileSize: config.upload.maxFileSize },  // Límite de tamaño de archivo
+  dest: config.upload.dest,
+  limits: { fileSize: config.upload.maxFileSize },
+  fileFilter: (_req, file, cb) => {
+    if (config.upload.allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Tipo de archivo no permitido: ${file.mimetype}`), false);
+    }
+  },
 });
 
 // ============================================================
@@ -96,6 +115,7 @@ router.get(
 
 router.post(
   "/contact",
+  contactLimiter,
   asyncHandler(async (req, res) => {
     const result = await emailService.sendContactEmail(req.body);
     res.json(result);
@@ -116,6 +136,10 @@ router.post(
   loginLimiter,
   asyncHandler(async (req, res) => {
     const { username, password } = req.body;
+    // Rechazar si username o password no son strings (previene NoSQL injection)
+    if (typeof username !== "string" || typeof password !== "string") {
+      return res.status(400).json({ message: "Credenciales inválidas", code: "BAD_REQUEST" });
+    }
     const user = await userService.authenticateUser(username, password);
     
     // Crear token JWT
@@ -188,6 +212,12 @@ router.post(
 
     
     const db = await connect();
+    const validHex = /^[a-fA-F0-9]{24}$/;
+    if (!ids.every((id) => typeof id === "string" && validHex.test(id))) {
+      return res
+        .status(400)
+        .json({ message: "IDs inválidos", code: "BAD_REQUEST" });
+    }
     const objIds = ids.map((id) => new ObjectId(id));
     const certs = await db
       .collection("certificates")
