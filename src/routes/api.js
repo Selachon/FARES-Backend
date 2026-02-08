@@ -12,6 +12,7 @@ import { certificateService } from "../certificateService.js";
 import { configService } from "../configService.js";
 import { draftService } from "../draftService.js";
 import { adminGuard, healthMiddleware, userGuard, appGuard, authenticate } from "../middleware.js";
+import { notificationService } from "../notificationService.js";
 import { performanceMonitor } from "../performanceMonitor.js";
 import { connect } from "../db.js";
 import archiver from "archiver";
@@ -45,6 +46,43 @@ const upload = multer({
   dest: config.upload.dest,                    // Directorio temporal
   limits: { fileSize: config.upload.maxFileSize },  // Límite de tamaño de archivo
 });
+
+// ============================================================
+// SSE - Notificaciones en tiempo real para usuarios USER
+// ============================================================
+router.get(
+  "/notifications/stream",
+  authenticate,
+  (req, res) => {
+    // Solo usuarios con rol USER reciben notificaciones
+    if (req.user.role !== "USER") {
+      return res.status(403).json({ message: "Solo para clientes", code: "FORBIDDEN" });
+    }
+
+    // Configurar SSE
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    // Heartbeat cada 30s para mantener la conexión viva
+    const heartbeat = setInterval(() => {
+      try { res.write(": heartbeat\n\n"); } catch { /* ignore */ }
+    }, 30_000);
+
+    // Registrar cliente
+    const { username } = req.user;
+    notificationService.addClient(username, res);
+
+    // Limpieza al cerrar conexión
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      notificationService.removeClient(username, res);
+    });
+  },
+);
 
 router.get("/health", healthMiddleware);
 router.get(
@@ -303,6 +341,8 @@ router.post(
       req.body,
       req.files,
     );
+    // Notificar a los usuarios asignados via SSE
+    notificationService.notifyCertificateCreated(certificate);
     res.status(201).json(certificate);
   }),
 );
@@ -391,6 +431,8 @@ router.post(
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const created = await draftService.publishDraft(id);
+    // Notificar a los usuarios asignados via SSE
+    notificationService.notifyCertificateCreated(created);
     res.status(201).json(created);
   }),
 );
