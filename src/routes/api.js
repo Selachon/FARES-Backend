@@ -15,6 +15,7 @@ import { adminGuard, healthMiddleware, userGuard, appGuard, authenticate } from 
 import { notificationService } from "../notificationService.js";
 import { performanceMonitor } from "../performanceMonitor.js";
 import { connect } from "../db.js";
+import { companyService } from "../companyService.js";
 import archiver from "archiver";
 import { ObjectId } from "mongodb";
 import { driveService } from "../driveService.js";
@@ -582,6 +583,25 @@ router.get(
   }),
 );
 
+router.get(
+  "/admin/companies",
+  adminGuard,
+  asyncHandler(async (_req, res) => {
+    const companies = await companyService.getAllCompanies();
+    res.json(companies);
+  }),
+);
+
+router.post(
+  "/admin/companies",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { name } = req.body || {};
+    const company = await companyService.createCompany(name);
+    res.status(201).json(company);
+  }),
+);
+
 
 router.put(
   "/admin/users/password",
@@ -593,6 +613,15 @@ router.put(
       newPassword,
     );
     res.json(result);
+  }),
+);
+
+router.post(
+  "/admin/users",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const user = await userService.createUser(req.body || {});
+    res.status(201).json(user);
   }),
 );
 

@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { logger, sanitizeString, parseUserList, createError } from "./utils.js";
 import { cacheService } from "./cacheService.js";
 import { performanceMonitor } from "./performanceMonitor.js";
+import { companyService } from "./companyService.js";
 
 class UserService {
   constructor() {
@@ -247,6 +248,78 @@ class UserService {
 
       logger.error("Admin password update failed", error);
       throw createError("Error actualizando la clave", 500);
+    }
+  }
+
+  async createUser({ username, password, role, empresa }) {
+    try {
+      if (!username || !password || !role || !empresa) {
+        throw createError(
+          "username, password, role y empresa son obligatorios",
+          400,
+        );
+      }
+
+      if (typeof password !== "string" || password.length < 8) {
+        throw createError("La contraseña debe tener al menos 8 caracteres", 400);
+      }
+
+      const sanitizedUsername = sanitizeString(username);
+      const sanitizedRole = sanitizeString(role).toUpperCase();
+      const sanitizedEmpresa = sanitizeString(empresa).toUpperCase();
+
+      if (!sanitizedUsername || !sanitizedRole || !sanitizedEmpresa) {
+        throw createError("Campos inválidos", 400);
+      }
+
+      const allowedRoles = ["ADMIN", "USER"];
+      if (!allowedRoles.includes(sanitizedRole)) {
+        throw createError("role inválido", 400);
+      }
+
+      performanceMonitor.trackDbQuery();
+
+      const db = await connect();
+      const existing = await db
+        .collection("users")
+        .findOne({ username: sanitizedUsername });
+
+      if (existing) {
+        throw createError("El usuario ya existe", 409, "USER_EXISTS");
+      }
+
+      const hash = await bcrypt.hash(password, 10);
+
+      const document = {
+        username: sanitizedUsername,
+        password: hash,
+        role: sanitizedRole,
+        empresa: sanitizedEmpresa,
+        createdAt: new Date(),
+      };
+
+      await db.collection("users").insertOne(document);
+
+      await companyService.createCompany(sanitizedEmpresa);
+
+      cacheService.clear("all_users");
+
+      logger.info("User created", {
+        username: sanitizedUsername,
+        role: sanitizedRole,
+        empresa: sanitizedEmpresa,
+      });
+
+      return {
+        username: sanitizedUsername,
+        role: sanitizedRole,
+        empresa: sanitizedEmpresa,
+      };
+    } catch (error) {
+      if (error.statusCode) throw error;
+
+      logger.error("Failed to create user", error);
+      throw createError("Error creando usuario", 500);
     }
   }
 }
