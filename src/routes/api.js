@@ -625,6 +625,16 @@ router.post(
   }),
 );
 
+router.delete(
+  "/admin/users/:username",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { username } = req.params;
+    const result = await userService.deleteUser(username);
+    res.json(result);
+  }),
+);
+
 router.put(
   "/admin/users/:username/password",
   adminGuard,

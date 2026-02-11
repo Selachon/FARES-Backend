@@ -322,6 +322,66 @@ class UserService {
       throw createError("Error creando usuario", 500);
     }
   }
+
+  async deleteUser(username) {
+    try {
+      if (!username) {
+        throw createError("username es obligatorio", 400);
+      }
+
+      const sanitizedUsername = sanitizeString(username);
+      if (!sanitizedUsername) {
+        throw createError("username invalido", 400);
+      }
+
+      performanceMonitor.trackDbQuery();
+
+      const db = await connect();
+      const existing = await db
+        .collection("users")
+        .findOne({ username: sanitizedUsername });
+
+      if (!existing) {
+        throw createError("Usuario no existe", 404);
+      }
+
+      const result = await db
+        .collection("users")
+        .deleteOne({ username: sanitizedUsername });
+
+      if (result.deletedCount === 0) {
+        throw createError("No se pudo eliminar el usuario", 500);
+      }
+
+      await Promise.all([
+        db
+          .collection("certificates")
+          .updateMany(
+            { assignedUsers: sanitizedUsername },
+            { $pull: { assignedUsers: sanitizedUsername } },
+          ),
+        db
+          .collection("drafts")
+          .updateMany(
+            { assignedUsers: sanitizedUsername },
+            { $pull: { assignedUsers: sanitizedUsername } },
+          ),
+      ]);
+
+      cacheService.clear("all_users");
+      cacheService.clear("all_certificates");
+      cacheService.clear("all_drafts");
+
+      logger.info("User deleted", { username: sanitizedUsername });
+
+      return { ok: true };
+    } catch (error) {
+      if (error.statusCode) throw error;
+
+      logger.error("Failed to delete user", error);
+      throw createError("Error eliminando usuario", 500);
+    }
+  }
 }
 
 
