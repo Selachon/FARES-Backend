@@ -35,9 +35,7 @@ class ExcelService {
       // === DATOS DEL INFORME ===
       this.setCellValue(mainSheet, 'P7', data.datosInforme?.numeroInforme);
       this.setCellValue(mainSheet, 'P9', data.datosInforme?.tipoInspeccion);
-      this.setCellValue(mainSheet, 'P10', data.datosInforme?.numeroFormato);
       this.setCellValue(mainSheet, 'P11', this.formatDate(data.datosInforme?.fechaInspeccion));
-      this.setCellValue(mainSheet, 'P12', this.formatDate(data.datosInforme?.fechaExpedicion));
 
       // === DATOS DEL CLIENTE ===
       this.setCellValue(mainSheet, 'H7', data.datosCliente?.cliente);
@@ -45,23 +43,23 @@ class ExcelService {
       this.setCellValue(mainSheet, 'H9', data.datosCliente?.direccion);
       this.setCellValue(mainSheet, 'H10', data.datosCliente?.ciudad);
       this.setCellValue(mainSheet, 'H11', data.datosCliente?.telefono);
-      this.setCellValue(mainSheet, 'H12', data.datosCliente?.personaContacto);
 
       // === INFORMACIÓN DEL ÍTEM ===
-      this.setCellValue(mainSheet, 'D15', data.informacionItem?.numeroSerie);
-      this.setCellValue(mainSheet, 'D16', data.informacionItem?.capacidad);
-      this.setCellValue(mainSheet, 'D17', data.informacionItem?.fabricante);
-      this.setCellValue(mainSheet, 'D18', data.informacionItem?.anioFabricacion);
-      this.setCellValue(mainSheet, 'D19', data.informacionItem?.codigoFabricacion);
-      this.setCellValue(mainSheet, 'D20', data.informacionItem?.tipoInstalacion);
-      this.setCellValue(mainSheet, 'D21', data.informacionItem?.clasificacion);
-      this.setCellValue(mainSheet, 'D22', data.informacionItem?.espesorCuerpo);
-      this.setCellValue(mainSheet, 'D23', data.informacionItem?.espesorCabeza);
-      this.setCellValue(mainSheet, 'D24', data.informacionItem?.presionOperacion);
-      this.setCellValue(mainSheet, 'D25', data.informacionItem?.presionDisenio);
-      this.setCellValue(mainSheet, 'D26', data.informacionItem?.claseUso);
-      this.setCellValue(mainSheet, 'D27', data.informacionItem?.ubicacion);
-      this.setCellValue(mainSheet, 'D28', data.informacionItem?.direccion);
+      this.setCellValueWithDefault(mainSheet, 'D15', data.informacionItem?.numeroSerie, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D16', data.informacionItem?.capacidad, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D17', data.informacionItem?.fabricante, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D18', data.informacionItem?.anioFabricacion, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D19', data.informacionItem?.codigoFabricacion, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D20', data.informacionItem?.tipoInstalacion, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D21', data.informacionItem?.clasificacion, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D22', data.informacionItem?.espesorCuerpo, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D23', data.informacionItem?.espesorCabeza, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D24', data.informacionItem?.presionOperacion, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D25', data.informacionItem?.presionDisenio, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D26', data.informacionItem?.claseUso, 'NR');
+      this.setCellValueWithDefault(mainSheet, 'D27', data.informacionItem?.ubicacion, 'NR');
+      const direccionInspeccion = data.informacionItem?.nombreUbicacion || data.informacionItem?.direccion;
+      this.setCellValueWithDefault(mainSheet, 'D28', direccionInspeccion, 'NR');
 
       // === ÍTEMS A EVALUAR (columnas J, K, L para C, NC, NA) ===
       if (data.itemsEvaluar) {
@@ -120,22 +118,22 @@ class ExcelService {
       this.setCellValue(mainSheet, 'G43', data.resultado);
 
       // === OBSERVACIONES (en la celda de observaciones) ===
-      const observaciones = data.reporteEvaluacion?.observacionesRecomendaciones || '';
-      this.setCellValue(mainSheet, 'H31', observaciones);
+      const observaciones = data.reporteEvaluacion?.observacionesRecomendaciones || '-';
+      this.setCellValueWithDefault(mainSheet, 'H31', observaciones, '-');
 
       // === REPORTE DE EVALUACIÓN (hoja 2) ===
       const evalSheet = workbook.getWorksheet('Reporte de Evaluación');
       if (evalSheet && data.reporteEvaluacion) {
-        this.setCellValue(evalSheet, 'E8', data.reporteEvaluacion.inspeccionVisualSuperficie);
-        this.setCellValue(evalSheet, 'E14', data.reporteEvaluacion.inspeccionVisualSoldaduras);
-        this.setCellValue(evalSheet, 'E20', data.reporteEvaluacion.inspeccionVisualAccesorios);
-        this.setCellValue(evalSheet, 'E26', data.reporteEvaluacion.hermeticidad);
-        this.setCellValue(evalSheet, 'E32', data.reporteEvaluacion.tuberiasConexiones);
-        this.setCellValue(evalSheet, 'E38', data.reporteEvaluacion.medicionEspesores);
-        this.setCellValue(evalSheet, 'E44', data.reporteEvaluacion.pruebaHidrostatica);
-        this.setCellValue(evalSheet, 'E50', data.reporteEvaluacion.revisionInterna);
-        this.setCellValue(evalSheet, 'E56', data.reporteEvaluacion.proteccionCatodica);
-        this.setCellValue(evalSheet, 'E63', data.reporteEvaluacion.observacionesRecomendaciones);
+        this.setCellValueWithDefault(evalSheet, 'E8', data.reporteEvaluacion.inspeccionVisualSuperficie, '-');
+        this.setCellValueWithDefault(evalSheet, 'E14', data.reporteEvaluacion.inspeccionVisualSoldaduras, '-');
+        this.setCellValueWithDefault(evalSheet, 'E20', data.reporteEvaluacion.inspeccionVisualAccesorios, '-');
+        this.setCellValueWithDefault(evalSheet, 'E26', data.reporteEvaluacion.hermeticidad, '-');
+        this.setCellValueWithDefault(evalSheet, 'E32', data.reporteEvaluacion.tuberiasConexiones, '-');
+        this.setCellValueWithDefault(evalSheet, 'E38', data.reporteEvaluacion.medicionEspesores, '-');
+        this.setCellValueWithDefault(evalSheet, 'E44', data.reporteEvaluacion.pruebaHidrostatica, '-');
+        this.setCellValueWithDefault(evalSheet, 'E50', data.reporteEvaluacion.revisionInterna, '-');
+        this.setCellValueWithDefault(evalSheet, 'E56', data.reporteEvaluacion.proteccionCatodica, '-');
+        this.setCellValueWithDefault(evalSheet, 'E63', data.reporteEvaluacion.observacionesRecomendaciones, '-');
       }
 
       logger.info('Excel template filled successfully');
@@ -156,6 +154,15 @@ class ExcelService {
       } catch (error) {
         logger.warn(`Could not set cell ${cellAddress}`, { error: error.message });
       }
+    }
+  }
+
+  setCellValueWithDefault(sheet, cellAddress, value, fallback) {
+    const safeValue = value !== undefined && value !== null && value !== '' ? value : fallback;
+    try {
+      sheet.getCell(cellAddress).value = safeValue;
+    } catch (error) {
+      logger.warn(`Could not set cell ${cellAddress}`, { error: error.message });
     }
   }
 

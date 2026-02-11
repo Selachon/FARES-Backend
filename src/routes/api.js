@@ -5,7 +5,7 @@ import multer from "multer";
 import rateLimit from "express-rate-limit";
 import jwt from "jsonwebtoken";
 import { config } from "../config.js";
-import { asyncHandler } from "../utils.js";
+import { asyncHandler, logger } from "../utils.js";
 import { emailService } from "../emailService.js";
 import { userService } from "../userService.js";
 import { certificateService } from "../certificateService.js";
@@ -16,6 +16,7 @@ import { notificationService } from "../notificationService.js";
 import { performanceMonitor } from "../performanceMonitor.js";
 import { connect } from "../db.js";
 import { companyService } from "../companyService.js";
+import { inventoryService } from "../inventoryService.js";
 import archiver from "archiver";
 import { ObjectId } from "mongodb";
 import { driveService } from "../driveService.js";
@@ -509,6 +510,25 @@ router.post(
       });
     }
 
+    try {
+      const info = inspectionData?.informacionItem || {};
+      const hasLocation =
+        (info?.nombreUbicacion && String(info.nombreUbicacion).trim()) ||
+        (info?.direccion && String(info.direccion).trim());
+
+      if (hasLocation) {
+        await inventoryService.createSite({
+          name: info?.nombreUbicacion,
+          address: info?.direccion,
+          latitud: info?.latitud,
+          longitud: info?.longitud,
+          source: 'inspection',
+        });
+      }
+    } catch (error) {
+      logger.warn('Inventory site creation failed', { error: error.message });
+    }
+
     // 1. Fill Excel template
     const workbook = await excelService.fillTemplate(inspectionData);
 
@@ -552,6 +572,33 @@ router.get(
       timestamp: new Date().toISOString(),
       version: "1.0.0"
     });
+  }),
+);
+
+router.get(
+  "/app/companies",
+  appGuard,
+  asyncHandler(async (_req, res) => {
+    const companies = await companyService.getAllCompanies();
+    res.json(companies);
+  }),
+);
+
+router.get(
+  "/app/sites",
+  appGuard,
+  asyncHandler(async (_req, res) => {
+    const sites = await inventoryService.getSites();
+    res.json(sites);
+  }),
+);
+
+router.post(
+  "/app/sites",
+  appGuard,
+  asyncHandler(async (req, res) => {
+    const site = await inventoryService.createSite(req.body || {});
+    res.status(201).json(site);
   }),
 );
 
