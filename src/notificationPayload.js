@@ -17,5 +17,11 @@ export function buildCertificateCreatedPayload(cert, options = {}) {
     payload.pendingCount = options.pendingCount;
   }
 
+  if (Array.isArray(options.pendingNumbers) && options.pendingNumbers.length > 0) {
+    payload.pendingNumbers = options.pendingNumbers
+      .filter((item) => typeof item === "string" && item.trim().length > 0)
+      .map((item) => item.trim());
+  }
+
   return payload;
 }

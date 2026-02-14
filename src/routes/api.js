@@ -130,6 +130,7 @@ router.get(
       {
         source: "pending",
         pendingCount: pending.count,
+        pendingNumbers: pending.pendingNumbers,
         timestamp,
       },
     );

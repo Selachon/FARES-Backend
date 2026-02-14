@@ -61,24 +61,27 @@ class NotificationInboxService {
       createdAt: { $gt: seenAt },
     };
 
-    const [count, latestCertificate] = await Promise.all([
-      certificates.countDocuments(query),
-      certificates
-        .find(query, {
-          projection: {
-            numCert: 1,
-            serial: 1,
-            empresa: 1,
-            createdAt: 1,
-          },
-        })
-        .sort({ createdAt: -1 })
-        .limit(1)
-        .next(),
-    ]);
+    const pendingCertificates = await certificates
+      .find(query, {
+        projection: {
+          numCert: 1,
+          serial: 1,
+          empresa: 1,
+          createdAt: 1,
+        },
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    const count = pendingCertificates.length;
+    const latestCertificate = pendingCertificates[0] || null;
+    const pendingNumbers = pendingCertificates
+      .map((item) => sanitizeString(item?.numCert))
+      .filter(Boolean);
 
     return {
       count,
+      pendingNumbers,
       latestCertificate: latestCertificate || null,
       seenAt,
     };
