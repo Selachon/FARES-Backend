@@ -19,8 +19,11 @@ export function buildCertificateCreatedPayload(cert, options = {}) {
 
   if (Array.isArray(options.pendingNumbers) && options.pendingNumbers.length > 0) {
     payload.pendingNumbers = options.pendingNumbers
-      .filter((item) => typeof item === "string" && item.trim().length > 0)
-      .map((item) => item.trim());
+      .map((item) => {
+        if (item === null || item === undefined) return "";
+        return String(item).trim();
+      })
+      .filter(Boolean);
   }
 
   return payload;

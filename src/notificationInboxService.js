@@ -76,7 +76,11 @@ class NotificationInboxService {
     const count = pendingCertificates.length;
     const latestCertificate = pendingCertificates[0] || null;
     const pendingNumbers = pendingCertificates
-      .map((item) => sanitizeString(item?.numCert))
+      .map((item) => {
+        const value = item?.numCert;
+        if (value === null || value === undefined) return "";
+        return sanitizeString(String(value));
+      })
       .filter(Boolean);
 
     return {
