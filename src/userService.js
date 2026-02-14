@@ -295,6 +295,7 @@ class UserService {
         password: hash,
         role: sanitizedRole,
         empresa: sanitizedEmpresa,
+        notificationsSeenAt: new Date(),
         createdAt: new Date(),
       };
 

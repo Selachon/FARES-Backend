@@ -13,6 +13,8 @@ import { configService } from "../configService.js";
 import { draftService } from "../draftService.js";
 import { adminGuard, healthMiddleware, userGuard, appGuard, authenticate } from "../middleware.js";
 import { notificationService } from "../notificationService.js";
+import { notificationInboxService } from "../notificationInboxService.js";
+import { buildCertificateCreatedPayload } from "../notificationPayload.js";
 import { performanceMonitor } from "../performanceMonitor.js";
 import { connect } from "../db.js";
 import { companyService } from "../companyService.js";
@@ -103,6 +105,50 @@ router.get(
       notificationService.removeClient(username, res);
     });
   },
+);
+
+router.get(
+  "/notifications/pending",
+  userGuard,
+  asyncHandler(async (req, res) => {
+    const { username, empresa } = req.user;
+    const pending = await notificationInboxService.getPendingForUser({
+      username,
+      empresa,
+    });
+
+    if (!pending.latestCertificate || pending.count === 0) {
+      return res.json({ count: 0, notification: null });
+    }
+
+    const timestamp = pending.latestCertificate.createdAt
+      ? new Date(pending.latestCertificate.createdAt).getTime()
+      : Date.now();
+
+    const notification = buildCertificateCreatedPayload(
+      pending.latestCertificate,
+      {
+        source: "pending",
+        pendingCount: pending.count,
+        timestamp,
+      },
+    );
+
+    res.json({
+      count: pending.count,
+      seenAt: pending.seenAt?.toISOString?.() || null,
+      notification,
+    });
+  }),
+);
+
+router.post(
+  "/notifications/seen",
+  userGuard,
+  asyncHandler(async (req, res) => {
+    const seenAt = await notificationInboxService.markSeen(req.user.username);
+    res.json({ ok: true, seenAt: seenAt.toISOString() });
+  }),
 );
 
 router.get("/health", healthMiddleware);

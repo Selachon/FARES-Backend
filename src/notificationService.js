@@ -1,5 +1,6 @@
 // Servicio de notificaciones en tiempo real via SSE (Server-Sent Events)
 // Mantiene conexiones abiertas por usuario y envía eventos cuando se crean certificados
+import { buildCertificateCreatedPayload } from "./notificationPayload.js";
 
 /** @type {Map<string, Set<import('express').Response>>} */
 const clients = new Map();
@@ -54,15 +55,7 @@ function notifyCertificateCreated(cert) {
   const users = Array.isArray(cert.assignedUsers) ? cert.assignedUsers : [];
   if (users.length === 0) return;
 
-  notifyUsers(users, {
-    type: "CERTIFICATE_CREATED",
-    certificate: {
-      numCert: cert.numCert,
-      serial: cert.serial,
-      empresa: cert.empresa,
-    },
-    timestamp: Date.now(),
-  });
+  notifyUsers(users, buildCertificateCreatedPayload(cert, { source: "realtime" }));
 }
 
 export const notificationService = {
