@@ -1,5 +1,14 @@
 export function buildCertificateCreatedPayload(cert, options = {}) {
   const certificate = cert || {};
+  const pendingNumbers = Array.isArray(options.pendingNumbers)
+    ? options.pendingNumbers
+        .map((item) => {
+          if (item === null || item === undefined) return "";
+          return String(item).trim();
+        })
+        .filter(Boolean)
+    : [];
+
   const payload = {
     type: "CERTIFICATE_CREATED",
     certificate: {
@@ -17,13 +26,8 @@ export function buildCertificateCreatedPayload(cert, options = {}) {
     payload.pendingCount = options.pendingCount;
   }
 
-  if (Array.isArray(options.pendingNumbers) && options.pendingNumbers.length > 0) {
-    payload.pendingNumbers = options.pendingNumbers
-      .map((item) => {
-        if (item === null || item === undefined) return "";
-        return String(item).trim();
-      })
-      .filter(Boolean);
+  if (pendingNumbers.length > 0) {
+    payload.pendingNumbers = pendingNumbers;
   }
 
   return payload;
