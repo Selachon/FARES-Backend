@@ -11,7 +11,7 @@ import { userService } from "../userService.js";
 import { certificateService } from "../certificateService.js";
 import { configService } from "../configService.js";
 import { draftService } from "../draftService.js";
-import { adminGuard, healthMiddleware, userGuard, appGuard, authenticate } from "../middleware.js";
+import { adminGuard, healthMiddleware, userGuard, appGuard, appBootstrapGuard, authenticate } from "../middleware.js";
 import { notificationService } from "../notificationService.js";
 import { notificationInboxService } from "../notificationInboxService.js";
 import { buildCertificateCreatedPayload } from "../notificationPayload.js";
@@ -52,6 +52,28 @@ const contactLimiter = rateLimit({
   message: {
     message: "Demasiados mensajes de contacto. Intenta nuevamente en 1 hora.",
     code: "TOO_MANY_REQUESTS"
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const appAuthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: {
+    message: "Demasiados intentos de autenticación de app. Intenta en 1 minuto.",
+    code: "TOO_MANY_REQUESTS",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const appRoutesLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: {
+    message: "Demasiadas solicitudes de app. Intenta más tarde.",
+    code: "TOO_MANY_REQUESTS",
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -521,6 +543,52 @@ router.post(
 // Endpoints específicos para la aplicación móvil offline
 // Usa appGuard en lugar de adminGuard para autenticación simple
 // ============================================================
+
+router.use("/app", appRoutesLimiter);
+
+router.post(
+  "/app/auth/token",
+  appAuthLimiter,
+  appBootstrapGuard,
+  asyncHandler(async (req, res) => {
+    const deviceIdRaw = String(req.body?.deviceId || "").trim();
+    const platformRaw = String(req.body?.platform || "unknown").trim().toLowerCase();
+    const appVersionRaw = String(req.body?.appVersion || "").trim();
+
+    const deviceId = deviceIdRaw.slice(0, 128);
+    const appVersion = appVersionRaw.slice(0, 32);
+    const allowedPlatforms = new Set(["ios", "android", "web", "unknown"]);
+    const platform = allowedPlatforms.has(platformRaw) ? platformRaw : "unknown";
+
+    if (!deviceId || deviceId.length < 8) {
+      return res.status(400).json({
+        message: "deviceId inválido",
+        code: "BAD_REQUEST",
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        deviceId,
+        platform,
+        appVersion,
+      },
+      config.security.appJwtSecret,
+      {
+        expiresIn: config.security.appJwtExpiresIn,
+        audience: "fares-mobile-app",
+        issuer: "fares-backend",
+      },
+    );
+
+    const decoded = jwt.decode(token);
+    const expiresAt = decoded?.exp
+      ? new Date(decoded.exp * 1000).toISOString()
+      : null;
+
+    res.json({ token, expiresAt });
+  }),
+);
 
 router.post(
   "/app/drafts",

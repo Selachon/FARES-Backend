@@ -163,6 +163,12 @@ export const config = {
   security: {
     // Clave API para app móvil (DEBE estar en .env, sin fallback)
     appApiKey: process.env.APP_API_KEY,
+    // Secreto para firmar tokens de acceso de app móvil
+    appJwtSecret: process.env.APP_JWT_SECRET || process.env.JWT_SECRET,
+    // Vida corta para minimizar impacto de token filtrado
+    appJwtExpiresIn: process.env.APP_JWT_EXPIRES_IN || "15m",
+    // Compatibilidad temporal para clientes legados con solo x-app-key
+    allowLegacyAppKey: process.env.ALLOW_LEGACY_APP_KEY !== "0",
   },
 };
 

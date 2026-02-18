@@ -199,16 +199,63 @@ export const notFoundHandler = (req, res) => {
 // Middleware de guard para la app móvil offline
 // Requiere header x-app-key con clave de API válida
 export const appGuard = (req, res, next) => {
-  const appKey = req.headers["x-app-key"];
-  
-  // Verificar clave de API para la app móvil (sin fallback hardcodeado)
-  if (!appKey || appKey !== config.security.appApiKey) {
-    return res.status(403).json({ 
-      message: "Clave de API inválida",
-      code: "INVALID_APP_KEY"
+  const authHeader = String(req.headers.authorization || "");
+  const bearerToken = authHeader.startsWith("Bearer ")
+    ? authHeader.slice("Bearer ".length).trim()
+    : "";
+
+  if (bearerToken) {
+    try {
+      const decoded = jwt.verify(bearerToken, config.security.appJwtSecret, {
+        audience: "fares-mobile-app",
+        issuer: "fares-backend",
+      });
+
+      req.appClient = {
+        deviceId: decoded.deviceId,
+        platform: decoded.platform,
+        appVersion: decoded.appVersion,
+        auth: "bearer",
+      };
+
+      return next();
+    } catch (error) {
+      logger.warn("Invalid mobile app token", { message: error.message });
+      return res.status(401).json({
+        message: "Token de app inválido o expirado",
+        code: "INVALID_APP_TOKEN",
+      });
+    }
+  }
+
+  if (!config.security.allowLegacyAppKey) {
+    return res.status(401).json({
+      message: "Token de app requerido",
+      code: "APP_TOKEN_REQUIRED",
     });
   }
-  
+
+  const appKey = req.headers["x-app-key"];
+  if (!appKey || appKey !== config.security.appApiKey) {
+    return res.status(403).json({
+      message: "Clave de API inválida",
+      code: "INVALID_APP_KEY",
+    });
+  }
+
+  req.appClient = { auth: "legacy-app-key" };
+
+  next();
+};
+
+export const appBootstrapGuard = (req, res, next) => {
+  const appKey = req.headers["x-app-key"];
+  if (!appKey || appKey !== config.security.appApiKey) {
+    return res.status(403).json({
+      message: "Clave de API inválida",
+      code: "INVALID_APP_KEY",
+    });
+  }
   next();
 };
 
