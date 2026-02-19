@@ -161,14 +161,14 @@ export const config = {
 
   // Configuración de seguridad
   security: {
-    // Clave API para app móvil (DEBE estar en .env, sin fallback)
+    // Clave API legacy para app móvil (transición, opcional)
     appApiKey: process.env.APP_API_KEY,
     // Secreto para firmar tokens de acceso de app móvil
     appJwtSecret: process.env.APP_JWT_SECRET || process.env.JWT_SECRET,
     // Vida corta para minimizar impacto de token filtrado
     appJwtExpiresIn: process.env.APP_JWT_EXPIRES_IN || "15m",
     // Compatibilidad temporal para clientes legados con solo x-app-key
-    allowLegacyAppKey: process.env.ALLOW_LEGACY_APP_KEY !== "0",
+    allowLegacyAppKey: process.env.ALLOW_LEGACY_APP_KEY === "1",
   },
 };
 
@@ -179,7 +179,6 @@ const REQUIRED_VARS = [
   "GOOGLE_OAUTH_CLIENT_SECRET",     // Secreto de cliente OAuth de Google
   "GOOGLE_OAUTH_REFRESH_TOKEN",     // Token de refresco OAuth de Google
   "JWT_SECRET",                     // Secreto para firmar tokens JWT
-  "APP_API_KEY",                    // Clave API para app móvil
 ];
 
 // Función para validar que todas las variables de entorno requeridas estén presentes

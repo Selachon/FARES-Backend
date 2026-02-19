@@ -11,7 +11,7 @@ import { userService } from "../userService.js";
 import { certificateService } from "../certificateService.js";
 import { configService } from "../configService.js";
 import { draftService } from "../draftService.js";
-import { adminGuard, healthMiddleware, userGuard, appGuard, appBootstrapGuard, authenticate } from "../middleware.js";
+import { adminGuard, healthMiddleware, userGuard, appGuard, authenticate } from "../middleware.js";
 import { notificationService } from "../notificationService.js";
 import { notificationInboxService } from "../notificationInboxService.js";
 import { buildCertificateCreatedPayload } from "../notificationPayload.js";
@@ -26,6 +26,7 @@ import { excelService } from "../excelService.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from 'url';
+import crypto from "crypto";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -78,6 +79,24 @@ const appRoutesLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+const hashSecret = (secret) =>
+  crypto.createHash("sha256").update(String(secret || "")).digest("hex");
+
+const safeEqualSecret = (plainTextSecret, storedHash) => {
+  const incoming = hashSecret(plainTextSecret);
+  const a = Buffer.from(incoming, "utf8");
+  const b = Buffer.from(String(storedHash || ""), "utf8");
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+};
+
+const appDevicesCollection = async () => {
+  const db = await connect();
+  const col = db.collection("app_devices");
+  await col.createIndex({ deviceId: 1 }, { unique: true });
+  return col;
+};
 
 // Configurar middleware de carga de archivos con multer + validación MIME
 const upload = multer({
@@ -547,9 +566,8 @@ router.post(
 router.use("/app", appRoutesLimiter);
 
 router.post(
-  "/app/auth/token",
+  "/app/auth/device-register",
   appAuthLimiter,
-  appBootstrapGuard,
   asyncHandler(async (req, res) => {
     const deviceIdRaw = String(req.body?.deviceId || "").trim();
     const platformRaw = String(req.body?.platform || "unknown").trim().toLowerCase();
@@ -566,6 +584,105 @@ router.post(
         code: "BAD_REQUEST",
       });
     }
+
+    const devices = await appDevicesCollection();
+    const existing = await devices.findOne({ deviceId });
+
+    if (existing?.status === "revoked") {
+      return res.status(403).json({
+        message: "Dispositivo revocado",
+        code: "DEVICE_REVOKED",
+      });
+    }
+
+    if (existing) {
+      return res.json({
+        ok: true,
+        alreadyRegistered: true,
+      });
+    }
+
+    const deviceSecret = crypto.randomBytes(32).toString("hex");
+    await devices.insertOne({
+      deviceId,
+      secretHash: hashSecret(deviceSecret),
+      status: "active",
+      platform,
+      appVersion,
+      createdAt: new Date(),
+      lastSeenAt: new Date(),
+    });
+
+    res.status(201).json({
+      ok: true,
+      alreadyRegistered: false,
+      deviceSecret,
+    });
+  }),
+);
+
+router.post(
+  "/app/auth/token",
+  appAuthLimiter,
+  asyncHandler(async (req, res) => {
+    const deviceIdRaw = String(req.body?.deviceId || "").trim();
+    const platformRaw = String(req.body?.platform || "unknown").trim().toLowerCase();
+    const appVersionRaw = String(req.body?.appVersion || "").trim();
+    const deviceSecret = String(req.body?.deviceSecret || "").trim();
+
+    const deviceId = deviceIdRaw.slice(0, 128);
+    const appVersion = appVersionRaw.slice(0, 32);
+    const allowedPlatforms = new Set(["ios", "android", "web", "unknown"]);
+    const platform = allowedPlatforms.has(platformRaw) ? platformRaw : "unknown";
+
+    if (!deviceId || deviceId.length < 8) {
+      return res.status(400).json({
+        message: "deviceId inválido",
+        code: "BAD_REQUEST",
+      });
+    }
+
+    if (!deviceSecret) {
+      return res.status(401).json({
+        message: "Credenciales de dispositivo requeridas",
+        code: "DEVICE_SECRET_REQUIRED",
+      });
+    }
+
+    const devices = await appDevicesCollection();
+    const device = await devices.findOne({ deviceId });
+
+    if (!device) {
+      return res.status(401).json({
+        message: "Dispositivo no registrado",
+        code: "DEVICE_NOT_ENROLLED",
+      });
+    }
+
+    if (device.status === "revoked") {
+      return res.status(403).json({
+        message: "Dispositivo revocado",
+        code: "DEVICE_REVOKED",
+      });
+    }
+
+    if (!safeEqualSecret(deviceSecret, device.secretHash)) {
+      return res.status(401).json({
+        message: "Credenciales de dispositivo inválidas",
+        code: "INVALID_DEVICE_SECRET",
+      });
+    }
+
+    await devices.updateOne(
+      { deviceId },
+      {
+        $set: {
+          platform,
+          appVersion,
+          lastSeenAt: new Date(),
+        },
+      },
+    );
 
     const token = jwt.sign(
       {

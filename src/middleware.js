@@ -235,6 +235,13 @@ export const appGuard = (req, res, next) => {
     });
   }
 
+  if (!config.security.appApiKey) {
+    return res.status(401).json({
+      message: "Token de app requerido",
+      code: "APP_TOKEN_REQUIRED",
+    });
+  }
+
   const appKey = req.headers["x-app-key"];
   if (!appKey || appKey !== config.security.appApiKey) {
     return res.status(403).json({
@@ -245,17 +252,6 @@ export const appGuard = (req, res, next) => {
 
   req.appClient = { auth: "legacy-app-key" };
 
-  next();
-};
-
-export const appBootstrapGuard = (req, res, next) => {
-  const appKey = req.headers["x-app-key"];
-  if (!appKey || appKey !== config.security.appApiKey) {
-    return res.status(403).json({
-      message: "Clave de API inválida",
-      code: "INVALID_APP_KEY",
-    });
-  }
   next();
 };
 
