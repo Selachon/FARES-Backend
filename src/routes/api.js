@@ -596,9 +596,23 @@ router.post(
     }
 
     if (existing) {
+      const rotatedSecret = crypto.randomBytes(32).toString("hex");
+      await devices.updateOne(
+        { deviceId },
+        {
+          $set: {
+            secretHash: hashSecret(rotatedSecret),
+            platform,
+            appVersion,
+            lastSeenAt: new Date(),
+          },
+        },
+      );
+
       return res.json({
         ok: true,
         alreadyRegistered: true,
+        deviceSecret: rotatedSecret,
       });
     }
 
