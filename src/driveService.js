@@ -2,6 +2,7 @@
 // Maneja autenticación OAuth, subida, descarga y gestión de archivos en Google Drive
 import { google } from "googleapis";
 import fs from "fs";
+import https from "https";
 import { config } from "./config.js";
 import { logger, retryOperation, pickFirst } from "./utils.js";
 import { performanceMonitor } from "./performanceMonitor.js";
@@ -262,6 +263,101 @@ class DriveService {
       formatos: results.for,
       certificados: results.cert,
     };
+  }
+
+  async downloadUrlToFile(url, token, outputPath) {
+    await new Promise((resolve, reject) => {
+      const fileStream = fs.createWriteStream(outputPath);
+
+      const req = https.get(
+        url,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+        (res) => {
+          if (res.statusCode !== 200) {
+            fileStream.close();
+            fs.unlink(outputPath, () => {});
+            reject(new Error(`Error exportando PDF: HTTP ${res.statusCode}`));
+            return;
+          }
+
+          res.pipe(fileStream);
+          fileStream.on("finish", () => fileStream.close(resolve));
+        },
+      );
+
+      req.on("error", (error) => {
+        fileStream.close();
+        fs.unlink(outputPath, () => {});
+        reject(error);
+      });
+
+      fileStream.on("error", (error) => {
+        req.destroy(error);
+      });
+    });
+  }
+
+  async convertExcelToPdf(excelPath, outputPdfPath) {
+    let tempSheetId = null;
+
+    try {
+      const uploaded = await this.drive.files.create({
+        requestBody: {
+          name: `tmp_pdf_${Date.now()}`,
+          mimeType: "application/vnd.google-apps.spreadsheet",
+        },
+        media: {
+          mimeType:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          body: fs.createReadStream(excelPath),
+        },
+        fields: "id",
+        supportsAllDrives: true,
+      });
+
+      tempSheetId = uploaded.data?.id;
+      if (!tempSheetId) throw new Error("No se pudo crear hoja temporal para PDF");
+
+      const tokenData = await this.oauth2.getAccessToken();
+      const token =
+        typeof tokenData === "string"
+          ? tokenData
+          : tokenData?.token;
+
+      if (!token) throw new Error("No se pudo obtener token OAuth para exportar PDF");
+
+      const pdfExportUrl =
+        `https://docs.google.com/spreadsheets/d/${tempSheetId}/export` +
+        "?format=pdf" +
+        "&size=0" +
+        "&portrait=true" +
+        "&fitw=true" +
+        "&sheetnames=false" +
+        "&printtitle=false" +
+        "&pagenum=UNDEFINED" +
+        "&gridlines=false" +
+        "&fzr=false";
+
+      await this.downloadUrlToFile(pdfExportUrl, token, outputPdfPath);
+    } finally {
+      if (tempSheetId) {
+        try {
+          await this.drive.files.delete({
+            fileId: tempSheetId,
+            supportsAllDrives: true,
+          });
+        } catch (error) {
+          logger.warn("No se pudo eliminar hoja temporal de PDF", {
+            fileId: tempSheetId,
+            error: error.message,
+          });
+        }
+      }
+    }
   }
 
   

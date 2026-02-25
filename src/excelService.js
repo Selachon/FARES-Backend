@@ -226,6 +226,38 @@ class ExcelService {
     return 'jpeg';
   }
 
+  async cloneWorkbook(workbook) {
+    const cloned = new ExcelJS.Workbook();
+    const buffer = await workbook.xlsx.writeBuffer();
+    await cloned.xlsx.load(buffer);
+    return cloned;
+  }
+
+  prepareWorkbookForPdf(workbook, excludedSheetNames = []) {
+    const excluded = new Set(excludedSheetNames);
+
+    const sheetsToRemove = workbook.worksheets
+      .filter((sheet) => excluded.has(sheet.name))
+      .map((sheet) => sheet.id);
+
+    for (const sheetId of sheetsToRemove) {
+      workbook.removeWorksheet(sheetId);
+    }
+
+    for (const sheet of workbook.worksheets) {
+      sheet.pageSetup = {
+        ...sheet.pageSetup,
+        paperSize: 1,
+        orientation: 'portrait',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 1,
+      };
+    }
+
+    return workbook;
+  }
+
   /**
    * Helper para establecer valor de celda de forma segura
    */

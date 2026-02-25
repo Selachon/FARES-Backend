@@ -797,31 +797,78 @@ router.post(
     // 1. Fill Excel template
     const workbook = await excelService.fillTemplate(inspectionData);
 
-    // 2. Save Excel to temp file
+    // 2. Prepare temp files
     const tempDir = path.join(__dirname, '..', 'uploads');
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
     const timestamp = Date.now();
     const excelPath = path.join(tempDir, `inspection_${timestamp}.xlsx`);
-    await excelService.saveWorkbook(workbook, excelPath);
+    const pdfSourceExcelPath = path.join(tempDir, `inspection_pdf_source_${timestamp}.xlsx`);
+    const pdfPath = path.join(tempDir, `inspection_${timestamp}.pdf`);
 
-    // 3. Create files object for draft service
-    const files = {
-      formatos: [{
-        path: excelPath,
-        originalname: `${draftData.serial || 'INSPECCION'}_${timestamp}.xlsx`,
-        mimetype: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      }]
-    };
-
-    // 4. Create draft with the Excel file
     let draft;
     try {
+      await excelService.saveWorkbook(workbook, excelPath);
+
+      const pdfWorkbook = await excelService.cloneWorkbook(workbook);
+      excelService.prepareWorkbookForPdf(pdfWorkbook, [
+        'Prueba Hidrostática',
+        'SOPORTE',
+      ]);
+      await excelService.saveWorkbook(pdfWorkbook, pdfSourceExcelPath);
+
+      await driveService.convertExcelToPdf(pdfSourceExcelPath, pdfPath);
+
+      const serialForName = draftData.serial || 'INSPECCION';
+      const empresaForName = draftData.empresa || 'DRAFT';
+      const numCertForName = draftData.numCert || 'DRAFT';
+      const excelFileName = `${empresaForName}_${numCertForName}_${serialForName}_${timestamp}.xlsx`;
+
+      // 3. Upload Excel to Drive (informes folder) without linking it in draft
+      const dbFolders = await driveService.getDriveFolders();
+      const informesFolder =
+        dbFolders.INF ||
+        config.google.drive.folders.INF ||
+        config.google.drive.parentFolderId;
+
+      await driveService.uploadFile({
+        localPath: excelPath,
+        fileName: excelFileName,
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        appProperties: {
+          Usuario: String(draftData.assignedUsers || ''),
+          NumCert: String(numCertForName),
+          Serial: String(serialForName),
+        },
+        folderId: informesFolder,
+      });
+
+      // 4. Create draft linking only PDF in `informes`
+      const files = {
+        informes: [{
+          path: pdfPath,
+          originalname: `${serialForName}_${timestamp}.pdf`,
+          mimetype: 'application/pdf'
+        }],
+      };
+
       draft = await draftService.createDraft(draftData, files);
     } finally {
-      // 5. Cleanup temp files (excel + uploaded photos)
+      // 5. Cleanup temp files (excel/pdf + uploaded photos)
       try {
         fs.unlinkSync(excelPath);
+      } catch (_err) {
+        // Ignore cleanup errors
+      }
+
+      try {
+        fs.unlinkSync(pdfSourceExcelPath);
+      } catch (_err) {
+        // Ignore cleanup errors
+      }
+
+      try {
+        fs.unlinkSync(pdfPath);
       } catch (_err) {
         // Ignore cleanup errors
       }
