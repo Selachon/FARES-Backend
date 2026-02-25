@@ -1,6 +1,7 @@
 // Servicio para llenar la plantilla Excel con datos de inspección
 import ExcelJS from 'exceljs';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { logger } from './utils.js';
 
@@ -136,12 +137,93 @@ class ExcelService {
         this.setCellValueWithDefault(evalSheet, 'E63', data.reporteEvaluacion.observacionesRecomendaciones, '-');
       }
 
+      // === REGISTROS FOTOGRAFICOS (hoja 6) ===
+      this.insertPhotoRecords(workbook, data.fotos || []);
+
       logger.info('Excel template filled successfully');
       return workbook;
     } catch (error) {
       logger.error('Error filling Excel template', error);
       throw error;
     }
+  }
+
+  insertPhotoRecords(workbook, photos) {
+    if (!Array.isArray(photos) || photos.length === 0) return;
+
+    const photosSheet = workbook.getWorksheet('Registros Fotográficos');
+    if (!photosSheet) return;
+
+    const slotsByCategory = {
+      placa_identificacion: ['B5:D9', 'E5:G9'],
+      area_inspeccion: ['H5:J9', 'K5:M9'],
+      superficie: ['B11:D15', 'E11:G15', 'H11:J15', 'K11:M15'],
+      soldaduras: ['B22:D26', 'E22:G26', 'H22:J26', 'K22:M26'],
+      roscas_conexiones: ['B33:D37', 'E33:G37', 'H33:J37', 'K33:M37'],
+      hermeticidad: ['B44:D48', 'E44:G48', 'H44:J48', 'K44:M48'],
+      soportes: ['B50:D54', 'E50:G54', 'H50:J54', 'K50:M54'],
+      revision_interna: ['B56:D60', 'E56:G60', 'H56:J60', 'K56:M60'],
+      prueba_hidrostatica: ['B67:D71', 'E67:G71'],
+      medicion_espesores: ['H67:J71', 'K67:M71'],
+      proteccion_catodica: ['B78:D82', 'E78:G82', 'H78:J82', 'K78:M82'],
+    };
+
+    for (const [category, slots] of Object.entries(slotsByCategory)) {
+      const categoryPhotos = photos.filter((photo) => photo?.category === category);
+      if (categoryPhotos.length === 0) continue;
+
+      for (let idx = 0; idx < slots.length; idx++) {
+        const photo = categoryPhotos[idx];
+        if (!photo) break;
+
+        const imageSource = this.resolveImageSource(photo);
+        if (!imageSource) continue;
+
+        try {
+          const imageId = workbook.addImage(imageSource);
+          photosSheet.addImage(imageId, slots[idx]);
+        } catch (error) {
+          logger.warn('Could not add image to Excel', {
+            category,
+            slot: slots[idx],
+            error: error.message,
+          });
+        }
+      }
+    }
+  }
+
+  resolveImageSource(photo) {
+    const extension = this.getImageExtension(photo);
+
+    if (photo?.uploadedPath && fs.existsSync(photo.uploadedPath)) {
+      try {
+        const buffer = fs.readFileSync(photo.uploadedPath);
+        return { buffer, extension };
+      } catch (_err) {
+        return null;
+      }
+    }
+
+    const base64Raw = typeof photo?.base64 === 'string' ? photo.base64.trim() : '';
+    if (base64Raw) {
+      if (base64Raw.startsWith('data:image/')) {
+        return { base64: base64Raw, extension };
+      }
+      return { base64: `data:image/${extension};base64,${base64Raw}`, extension };
+    }
+
+    return null;
+  }
+
+  getImageExtension(photo) {
+    const mime = String(photo?.uploadedMimeType || '').toLowerCase();
+    if (mime === 'image/png') return 'png';
+
+    const uri = String(photo?.uri || '').toLowerCase();
+    if (uri.endsWith('.png')) return 'png';
+
+    return 'jpeg';
   }
 
   /**

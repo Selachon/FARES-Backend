@@ -724,6 +724,7 @@ router.post(
 router.post(
   "/app/drafts",
   appGuard,
+  upload.any(),
   asyncHandler(async (req, res) => {
     // Receive full inspection data from mobile app
     const { inspeccionCompleta, ...draftData } = req.body;
@@ -743,6 +744,10 @@ router.post(
       });
     }
 
+    const photoFiles = (req.files || []).filter((file) =>
+      String(file.fieldname || "").startsWith("photo_")
+    );
+
     // Parse if it comes as string
     let inspectionData;
     try {
@@ -753,6 +758,20 @@ router.post(
       return res.status(400).json({
         message: "inspeccionCompleta tiene formato inválido",
         code: "INVALID_JSON_FORMAT"
+      });
+    }
+
+    if (Array.isArray(inspectionData?.fotos) && photoFiles.length > 0) {
+      const filesByField = new Map(photoFiles.map((file) => [file.fieldname, file]));
+      inspectionData.fotos = inspectionData.fotos.map((photo) => {
+        if (!photo?.uploadField) return photo;
+        const uploaded = filesByField.get(photo.uploadField);
+        if (!uploaded) return photo;
+        return {
+          ...photo,
+          uploadedPath: uploaded.path,
+          uploadedMimeType: uploaded.mimetype,
+        };
       });
     }
 
@@ -796,13 +815,24 @@ router.post(
     };
 
     // 4. Create draft with the Excel file
-    const draft = await draftService.createDraft(draftData, files);
-
-    // 5. Cleanup temp file
+    let draft;
     try {
-      fs.unlinkSync(excelPath);
-    } catch (err) {
-      // Ignore cleanup errors
+      draft = await draftService.createDraft(draftData, files);
+    } finally {
+      // 5. Cleanup temp files (excel + uploaded photos)
+      try {
+        fs.unlinkSync(excelPath);
+      } catch (_err) {
+        // Ignore cleanup errors
+      }
+
+      for (const photoFile of photoFiles) {
+        try {
+          fs.unlinkSync(photoFile.path);
+        } catch (_err) {
+          // Ignore cleanup errors
+        }
+      }
     }
 
     res.status(201).json(draft);
