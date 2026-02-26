@@ -265,40 +265,66 @@ class DriveService {
     };
   }
 
-  async downloadUrlToFile(url, token, outputPath) {
-    await new Promise((resolve, reject) => {
-      const fileStream = fs.createWriteStream(outputPath);
+  async downloadUrlToFile(url, token, outputPath, maxRedirects = 5) {
+    let currentUrl = url;
+    let redirectCount = 0;
 
-      const req = https.get(
-        url,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
+    while (redirectCount < maxRedirects) {
+      const result = await new Promise((resolve, reject) => {
+        const fileStream = fs.createWriteStream(outputPath);
+
+        const req = https.get(
+          currentUrl,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
           },
-        },
-        (res) => {
-          if (res.statusCode !== 200) {
-            fileStream.close();
-            fs.unlink(outputPath, () => {});
-            reject(new Error(`Error exportando PDF: HTTP ${res.statusCode}`));
-            return;
-          }
+          (res) => {
+            // Handle redirects (301, 302, 303, 307, 308)
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+              fileStream.close();
+              fs.unlink(outputPath, () => {});
+              resolve({ redirect: res.headers.location });
+              return;
+            }
 
-          res.pipe(fileStream);
-          fileStream.on("finish", () => fileStream.close(resolve));
-        },
-      );
+            if (res.statusCode !== 200) {
+              fileStream.close();
+              fs.unlink(outputPath, () => {});
+              reject(new Error(`Error exportando PDF: HTTP ${res.statusCode}`));
+              return;
+            }
 
-      req.on("error", (error) => {
-        fileStream.close();
-        fs.unlink(outputPath, () => {});
-        reject(error);
+            res.pipe(fileStream);
+            fileStream.on("finish", () => fileStream.close(() => resolve({ done: true })));
+          },
+        );
+
+        req.on("error", (error) => {
+          fileStream.close();
+          fs.unlink(outputPath, () => {});
+          reject(error);
+        });
+
+        fileStream.on("error", (error) => {
+          req.destroy(error);
+        });
       });
 
-      fileStream.on("error", (error) => {
-        req.destroy(error);
-      });
-    });
+      if (result.done) {
+        return;
+      }
+
+      if (result.redirect) {
+        currentUrl = result.redirect;
+        redirectCount++;
+        logger.info("PDF export redirect", { redirectCount, newUrl: currentUrl.slice(0, 100) });
+        continue;
+      }
+    }
+
+    throw new Error(`Demasiados redirects al exportar PDF (${maxRedirects})`);
   }
 
   async convertExcelToPdf(excelPath, outputPdfPath) {
