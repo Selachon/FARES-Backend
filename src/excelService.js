@@ -157,9 +157,18 @@ class ExcelService {
     const slotsByCategory = {
       placa_identificacion: ['B5:D9', 'E5:G9'],
       area_inspeccion: ['H5:J9', 'K5:M9'],
-      superficie: ['B11:D15', 'E11:G15', 'H11:J15', 'K11:M15'],
-      soldaduras: ['B22:D26', 'E22:G26', 'H22:J26', 'K22:M26'],
-      roscas_conexiones: ['B33:D37', 'E33:G37', 'H33:J37', 'K33:M37'],
+      superficie: [
+        'B11:D15', 'E11:G15', 'H11:J15', 'K11:M15',
+        'B16:D20', 'E16:G20', 'H16:J20', 'K16:M20',
+      ],
+      soldaduras: [
+        'B22:D26', 'E22:G26', 'H22:J26', 'K22:M26',
+        'B27:D31', 'E27:G31', 'H27:J31', 'K27:M31',
+      ],
+      roscas_conexiones: [
+        'B33:D37', 'E33:G37', 'H33:J37', 'K33:M37',
+        'B38:D42', 'E38:G42', 'H38:J42', 'K38:M42',
+      ],
       hermeticidad: ['B44:D48', 'E44:G48', 'H44:J48', 'K44:M48'],
       soportes: ['B50:D54', 'E50:G54', 'H50:J54', 'K50:M54'],
       revision_interna: ['B56:D60', 'E56:G60', 'H56:J60', 'K56:M60'],
@@ -242,6 +251,20 @@ class ExcelService {
 
     for (const sheetId of sheetsToRemove) {
       workbook.removeWorksheet(sheetId);
+    }
+
+    // Hide rows for photo categories that should not appear in PDF
+    const photosSheet = workbook.getWorksheet('Registros Fotográficos');
+    if (photosSheet) {
+      // Revisión interna: rows 55-65
+      // Prueba hidrostática: rows 66-76
+      // Medición de espesores: rows 66-76 (shares with prueba)
+      // Protección catódica: rows 77-87
+      // Hide rows 55 to 87 to exclude these sections
+      for (let row = 55; row <= 87; row++) {
+        const r = photosSheet.getRow(row);
+        r.hidden = true;
+      }
     }
 
     for (const sheet of workbook.worksheets) {

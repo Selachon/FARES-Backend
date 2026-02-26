@@ -365,14 +365,18 @@ class DriveService {
           "?format=pdf" +
           "&size=0" +
           "&portrait=true" +
-          "&fitw=true" +
+          "&scale=4" +
+          "&top_margin=0.25" +
+          "&bottom_margin=0.25" +
+          "&left_margin=0.25" +
+          "&right_margin=0.25" +
           "&sheetnames=false" +
           "&printtitle=false" +
           "&pagenum=UNDEFINED" +
           "&gridlines=false" +
           "&fzr=false";
 
-        await wait(1200);
+        await wait(800);
         await this.downloadUrlToFile(pdfExportUrl, token, outputPdfPath);
         logger.info("PDF conversion completed", { attempt });
         return;
