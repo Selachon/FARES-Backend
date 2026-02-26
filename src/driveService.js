@@ -302,62 +302,83 @@ class DriveService {
   }
 
   async convertExcelToPdf(excelPath, outputPdfPath) {
-    let tempSheetId = null;
+    const maxAttempts = 3;
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    let lastError = null;
 
-    try {
-      const uploaded = await this.drive.files.create({
-        requestBody: {
-          name: `tmp_pdf_${Date.now()}`,
-          mimeType: "application/vnd.google-apps.spreadsheet",
-        },
-        media: {
-          mimeType:
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          body: fs.createReadStream(excelPath),
-        },
-        fields: "id",
-        supportsAllDrives: true,
-      });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      let tempSheetId = null;
 
-      tempSheetId = uploaded.data?.id;
-      if (!tempSheetId) throw new Error("No se pudo crear hoja temporal para PDF");
+      try {
+        logger.info("PDF conversion attempt started", { attempt, maxAttempts });
 
-      const tokenData = await this.oauth2.getAccessToken();
-      const token =
-        typeof tokenData === "string"
-          ? tokenData
-          : tokenData?.token;
+        const uploaded = await this.drive.files.create({
+          requestBody: {
+            name: `tmp_pdf_${Date.now()}`,
+            mimeType: "application/vnd.google-apps.spreadsheet",
+          },
+          media: {
+            mimeType:
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            body: fs.createReadStream(excelPath),
+          },
+          fields: "id",
+          supportsAllDrives: true,
+        });
 
-      if (!token) throw new Error("No se pudo obtener token OAuth para exportar PDF");
+        tempSheetId = uploaded.data?.id;
+        if (!tempSheetId) throw new Error("No se pudo crear hoja temporal para PDF");
 
-      const pdfExportUrl =
-        `https://docs.google.com/spreadsheets/d/${tempSheetId}/export` +
-        "?format=pdf" +
-        "&size=0" +
-        "&portrait=true" +
-        "&fitw=true" +
-        "&sheetnames=false" +
-        "&printtitle=false" +
-        "&pagenum=UNDEFINED" +
-        "&gridlines=false" +
-        "&fzr=false";
+        const tokenData = await this.oauth2.getAccessToken();
+        const token = typeof tokenData === "string" ? tokenData : tokenData?.token;
 
-      await this.downloadUrlToFile(pdfExportUrl, token, outputPdfPath);
-    } finally {
-      if (tempSheetId) {
-        try {
-          await this.drive.files.delete({
-            fileId: tempSheetId,
-            supportsAllDrives: true,
-          });
-        } catch (error) {
-          logger.warn("No se pudo eliminar hoja temporal de PDF", {
-            fileId: tempSheetId,
-            error: error.message,
-          });
+        if (!token) throw new Error("No se pudo obtener token OAuth para exportar PDF");
+
+        const pdfExportUrl =
+          `https://docs.google.com/spreadsheets/d/${tempSheetId}/export` +
+          "?format=pdf" +
+          "&size=0" +
+          "&portrait=true" +
+          "&fitw=true" +
+          "&sheetnames=false" +
+          "&printtitle=false" +
+          "&pagenum=UNDEFINED" +
+          "&gridlines=false" +
+          "&fzr=false";
+
+        await wait(1200);
+        await this.downloadUrlToFile(pdfExportUrl, token, outputPdfPath);
+        logger.info("PDF conversion completed", { attempt });
+        return;
+      } catch (error) {
+        lastError = error;
+        logger.warn("PDF conversion attempt failed", {
+          attempt,
+          maxAttempts,
+          error: error.message,
+        });
+
+        if (attempt < maxAttempts) {
+          await wait(1500 * attempt);
+        }
+      } finally {
+        if (tempSheetId) {
+          try {
+            await this.drive.files.delete({
+              fileId: tempSheetId,
+              supportsAllDrives: true,
+            });
+          } catch (error) {
+            logger.warn("No se pudo eliminar hoja temporal de PDF", {
+              fileId: tempSheetId,
+              error: error.message,
+            });
+          }
         }
       }
     }
+
+    throw lastError || new Error("No se pudo convertir Excel a PDF");
   }
 
   

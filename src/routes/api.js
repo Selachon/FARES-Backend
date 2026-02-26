@@ -726,6 +726,7 @@ router.post(
   appGuard,
   upload.any(),
   asyncHandler(async (req, res) => {
+    const startedAt = Date.now();
     // Receive full inspection data from mobile app
     const { inspeccionCompleta, ...draftData } = req.body;
 
@@ -747,6 +748,12 @@ router.post(
     const photoFiles = (req.files || []).filter((file) =>
       String(file.fieldname || "").startsWith("photo_")
     );
+
+    logger.info("App draft sync started", {
+      serial: draftData.serial,
+      empresa: draftData.empresa,
+      photosUploaded: photoFiles.length,
+    });
 
     // Parse if it comes as string
     let inspectionData;
@@ -809,6 +816,7 @@ router.post(
     let draft;
     try {
       await excelService.saveWorkbook(workbook, excelPath);
+      logger.info("Excel generated for app draft", { excelPath });
 
       const pdfWorkbook = await excelService.cloneWorkbook(workbook);
       excelService.prepareWorkbookForPdf(pdfWorkbook, [
@@ -816,8 +824,10 @@ router.post(
         'SOPORTE',
       ]);
       await excelService.saveWorkbook(pdfWorkbook, pdfSourceExcelPath);
+      logger.info("PDF source workbook ready", { pdfSourceExcelPath });
 
       await driveService.convertExcelToPdf(pdfSourceExcelPath, pdfPath);
+      logger.info("PDF generated from Excel", { pdfPath });
 
       const serialForName = draftData.serial || 'INSPECCION';
       const empresaForName = draftData.empresa || 'DRAFT';
@@ -831,18 +841,6 @@ router.post(
         config.google.drive.folders.INF ||
         config.google.drive.parentFolderId;
 
-      await driveService.uploadFile({
-        localPath: excelPath,
-        fileName: excelFileName,
-        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        appProperties: {
-          Usuario: String(draftData.assignedUsers || ''),
-          NumCert: String(numCertForName),
-          Serial: String(serialForName),
-        },
-        folderId: informesFolder,
-      });
-
       // 4. Create draft linking only PDF in `informes`
       const files = {
         informes: [{
@@ -852,7 +850,31 @@ router.post(
         }],
       };
 
-      draft = await draftService.createDraft(draftData, files);
+      const [_, draftCreated] = await Promise.all([
+        driveService.uploadFile({
+          localPath: excelPath,
+          fileName: excelFileName,
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          appProperties: {
+            Usuario: String(draftData.assignedUsers || ''),
+            NumCert: String(numCertForName),
+            Serial: String(serialForName),
+          },
+          folderId: informesFolder,
+        }),
+        draftService.createDraft(draftData, files),
+      ]);
+
+      logger.info("Excel uploaded to Drive without draft link", {
+        folder: "INF",
+        fileName: excelFileName,
+      });
+
+      draft = draftCreated;
+      logger.info("App draft sync completed", {
+        draftId: draft?.id,
+        elapsedMs: Date.now() - startedAt,
+      });
     } finally {
       // 5. Cleanup temp files (excel/pdf + uploaded photos)
       try {
