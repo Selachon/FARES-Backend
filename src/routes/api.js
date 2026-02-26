@@ -812,6 +812,7 @@ router.post(
     const excelPath = path.join(tempDir, `inspection_${timestamp}.xlsx`);
     const pdfSourceExcelPath = path.join(tempDir, `inspection_pdf_source_${timestamp}.xlsx`);
     const pdfPath = path.join(tempDir, `inspection_${timestamp}.pdf`);
+    let keepExcelForBackgroundUpload = false;
 
     let draft;
     try {
@@ -834,13 +835,6 @@ router.post(
       const numCertForName = draftData.numCert || 'DRAFT';
       const excelFileName = `${empresaForName}_${numCertForName}_${serialForName}_${timestamp}.xlsx`;
 
-      // 3. Upload Excel to Drive (informes folder) without linking it in draft
-      const dbFolders = await driveService.getDriveFolders();
-      const informesFolder =
-        dbFolders.INF ||
-        config.google.drive.folders.INF ||
-        config.google.drive.parentFolderId;
-
       // 4. Create draft linking only PDF in `informes`
       const files = {
         informes: [{
@@ -850,37 +844,62 @@ router.post(
         }],
       };
 
-      const [_, draftCreated] = await Promise.all([
-        driveService.uploadFile({
-          localPath: excelPath,
-          fileName: excelFileName,
-          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          appProperties: {
-            Usuario: String(draftData.assignedUsers || ''),
-            NumCert: String(numCertForName),
-            Serial: String(serialForName),
-          },
-          folderId: informesFolder,
-        }),
-        draftService.createDraft(draftData, files),
-      ]);
-
-      logger.info("Excel uploaded to Drive without draft link", {
-        folder: "INF",
-        fileName: excelFileName,
-      });
-
-      draft = draftCreated;
+      draft = await draftService.createDraft(draftData, files);
       logger.info("App draft sync completed", {
         draftId: draft?.id,
         elapsedMs: Date.now() - startedAt,
       });
+
+      res.status(201).json(draft);
+
+      keepExcelForBackgroundUpload = true;
+      void (async () => {
+        try {
+          const dbFolders = await driveService.getDriveFolders();
+          const informesFolder =
+            dbFolders.INF ||
+            config.google.drive.folders.INF ||
+            config.google.drive.parentFolderId;
+
+          await driveService.uploadFile({
+            localPath: excelPath,
+            fileName: excelFileName,
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            appProperties: {
+              Usuario: String(draftData.assignedUsers || ''),
+              NumCert: String(numCertForName),
+              Serial: String(serialForName),
+            },
+            folderId: informesFolder,
+          });
+
+          logger.info("Excel uploaded to Drive without draft link", {
+            folder: "INF",
+            fileName: excelFileName,
+          });
+        } catch (error) {
+          logger.error("Background Excel upload failed", {
+            serial: serialForName,
+            fileName: excelFileName,
+            message: error.message,
+            stack: error.stack,
+          });
+        } finally {
+          try {
+            fs.unlinkSync(excelPath);
+          } catch (_err) {
+            // Ignore cleanup errors
+          }
+        }
+      })();
     } finally {
-      // 5. Cleanup temp files (excel/pdf + uploaded photos)
-      try {
-        fs.unlinkSync(excelPath);
-      } catch (_err) {
-        // Ignore cleanup errors
+      // 5. Cleanup temp files (pdf/photo temps)
+      if (!keepExcelForBackgroundUpload) {
+        try {
+          fs.unlinkSync(excelPath);
+        } catch (_err) {
+          // Ignore cleanup errors
+        }
       }
 
       try {
@@ -903,8 +922,6 @@ router.post(
         }
       }
     }
-
-    res.status(201).json(draft);
   }),
 );
 
