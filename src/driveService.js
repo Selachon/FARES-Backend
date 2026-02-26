@@ -360,16 +360,21 @@ class DriveService {
 
         if (!token) throw new Error("No se pudo obtener token OAuth para exportar PDF");
 
+        // PDF export params:
+        // size=0 = Letter, scale=4 = Fit to page (width & height)
+        // horizontal=true = center horizontally
+        // margins in inches (0.15 = minimal)
         const pdfExportUrl =
           `https://docs.google.com/spreadsheets/d/${tempSheetId}/export` +
           "?format=pdf" +
           "&size=0" +
           "&portrait=true" +
           "&scale=4" +
-          "&top_margin=0.25" +
-          "&bottom_margin=0.25" +
-          "&left_margin=0.25" +
-          "&right_margin=0.25" +
+          "&horizontal_alignment=CENTER" +
+          "&top_margin=0.15" +
+          "&bottom_margin=0.15" +
+          "&left_margin=0.15" +
+          "&right_margin=0.15" +
           "&sheetnames=false" +
           "&printtitle=false" +
           "&pagenum=UNDEFINED" +

@@ -801,6 +801,10 @@ router.post(
       logger.warn('Inventory site creation failed', { error: error.message });
     }
 
+    // Flag to enable/disable automatic PDF generation
+    // Set to true when process is 100% automated (signatures, measurements done in app)
+    const ENABLE_AUTO_PDF = false;
+
     // 1. Fill Excel template
     logger.info("Step 1: Filling Excel template", { serial: draftData.serial });
     const workbook = await excelService.fillTemplate(inspectionData);
@@ -814,7 +818,11 @@ router.post(
     const excelPath = path.join(tempDir, `inspection_${timestamp}.xlsx`);
     const pdfSourceExcelPath = path.join(tempDir, `inspection_pdf_source_${timestamp}.xlsx`);
     const pdfPath = path.join(tempDir, `inspection_${timestamp}.pdf`);
-    let keepExcelForBackgroundUpload = false;
+
+    const serialForName = draftData.serial || 'INSPECCION';
+    const empresaForName = draftData.empresa || 'DRAFT';
+    const numCertForName = draftData.numCert || 'DRAFT';
+    const excelFileName = `${empresaForName}_${numCertForName}_${serialForName}_${timestamp}.xlsx`;
 
     let draft;
     try {
@@ -822,103 +830,98 @@ router.post(
       await excelService.saveWorkbook(workbook, excelPath);
       logger.info("Step 2 complete: Excel saved", { excelPath });
 
-      logger.info("Step 3: Cloning workbook for PDF");
-      const pdfWorkbook = await excelService.cloneWorkbook(workbook);
-      excelService.prepareWorkbookForPdf(pdfWorkbook, [
-        'Prueba Hidrostática',
-        'SOPORTE',
-      ]);
-      await excelService.saveWorkbook(pdfWorkbook, pdfSourceExcelPath);
-      logger.info("Step 3 complete: PDF source ready", { pdfSourceExcelPath });
+      // PDF generation logic (disabled for now, kept for future automation)
+      if (ENABLE_AUTO_PDF) {
+        logger.info("Step 3: Cloning workbook for PDF");
+        const pdfWorkbook = await excelService.cloneWorkbook(workbook);
+        // Exclude photos from categories that shouldn't appear in PDF
+        excelService.insertPhotoRecords(pdfWorkbook, inspectionData.fotos || [], {
+          excludeCategories: ['revision_interna', 'prueba_hidrostatica', 'medicion_espesores', 'proteccion_catodica'],
+        });
+        excelService.prepareWorkbookForPdf(pdfWorkbook, [
+          'Prueba Hidrostática',
+          'SOPORTE',
+        ]);
+        await excelService.saveWorkbook(pdfWorkbook, pdfSourceExcelPath);
+        logger.info("Step 3 complete: PDF source ready", { pdfSourceExcelPath });
 
-      logger.info("Step 4: Converting Excel to PDF via Google Sheets");
-      await driveService.convertExcelToPdf(pdfSourceExcelPath, pdfPath);
-      logger.info("Step 4 complete: PDF generated", { pdfPath });
+        logger.info("Step 4: Converting Excel to PDF via Google Sheets");
+        await driveService.convertExcelToPdf(pdfSourceExcelPath, pdfPath);
+        logger.info("Step 4 complete: PDF generated", { pdfPath });
+      }
 
-      const serialForName = draftData.serial || 'INSPECCION';
-      const empresaForName = draftData.empresa || 'DRAFT';
-      const numCertForName = draftData.numCert || 'DRAFT';
-      const excelFileName = `${empresaForName}_${numCertForName}_${serialForName}_${timestamp}.xlsx`;
+      // 3. Upload Excel to Drive and get link for formatos
+      logger.info("Step 3: Uploading Excel to Drive");
+      const dbFolders = await driveService.getDriveFolders();
+      const informesFolder =
+        dbFolders.INF ||
+        config.google.drive.folders.INF ||
+        config.google.drive.parentFolderId;
 
-      // 5. Create draft linking only PDF in `informes`
-      logger.info("Step 5: Creating draft with PDF in informes");
-      const files = {
-        informes: [{
+      const excelUploadResult = await driveService.uploadFile({
+        localPath: excelPath,
+        fileName: excelFileName,
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        appProperties: {
+          Usuario: String(draftData.assignedUsers || ''),
+          NumCert: String(numCertForName),
+          Serial: String(serialForName),
+        },
+        folderId: informesFolder,
+      });
+
+      logger.info("Step 3 complete: Excel uploaded to Drive", {
+        folder: "INF",
+        fileName: excelFileName,
+        link: excelUploadResult?.webViewLink,
+      });
+
+      // 4. Create draft with Excel link in formatos (and PDF in informes if enabled)
+      logger.info("Step 4: Creating draft");
+      const files = {};
+
+      if (ENABLE_AUTO_PDF) {
+        files.informes = [{
           path: pdfPath,
           originalname: `${serialForName}_${timestamp}.pdf`,
           mimetype: 'application/pdf'
-        }],
+        }];
+      }
+
+      // Add Excel link to draft data
+      draftData.links = {
+        ...(draftData.links || {}),
+        formatos: excelUploadResult?.webViewLink || '#',
       };
 
       draft = await draftService.createDraft(draftData, files);
-      logger.info("Step 5 complete: Draft created", { draftId: draft?.id });
+      logger.info("Step 4 complete: Draft created", { draftId: draft?.id });
       logger.info("App draft sync completed", {
         draftId: draft?.id,
         elapsedMs: Date.now() - startedAt,
       });
 
       res.status(201).json(draft);
-
-      keepExcelForBackgroundUpload = true;
-      void (async () => {
-        try {
-          const dbFolders = await driveService.getDriveFolders();
-          const informesFolder =
-            dbFolders.INF ||
-            config.google.drive.folders.INF ||
-            config.google.drive.parentFolderId;
-
-          await driveService.uploadFile({
-            localPath: excelPath,
-            fileName: excelFileName,
-            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            appProperties: {
-              Usuario: String(draftData.assignedUsers || ''),
-              NumCert: String(numCertForName),
-              Serial: String(serialForName),
-            },
-            folderId: informesFolder,
-          });
-
-          logger.info("Excel uploaded to Drive without draft link", {
-            folder: "INF",
-            fileName: excelFileName,
-          });
-        } catch (error) {
-          logger.error("Background Excel upload failed", {
-            serial: serialForName,
-            fileName: excelFileName,
-            message: error.message,
-            stack: error.stack,
-          });
-        } finally {
-          try {
-            fs.unlinkSync(excelPath);
-          } catch (_err) {
-            // Ignore cleanup errors
-          }
-        }
-      })();
     } finally {
-      // 5. Cleanup temp files (pdf/photo temps)
-      if (!keepExcelForBackgroundUpload) {
+      // Cleanup temp files
+      try {
+        fs.unlinkSync(excelPath);
+      } catch (_err) {
+        // Ignore cleanup errors
+      }
+
+      if (ENABLE_AUTO_PDF) {
         try {
-          fs.unlinkSync(excelPath);
+          fs.unlinkSync(pdfSourceExcelPath);
         } catch (_err) {
           // Ignore cleanup errors
         }
-      }
 
-      try {
-        fs.unlinkSync(pdfSourceExcelPath);
-      } catch (_err) {
-        // Ignore cleanup errors
-      }
-
-      try {
-        fs.unlinkSync(pdfPath);
-      } catch (_err) {
-        // Ignore cleanup errors
+        try {
+          fs.unlinkSync(pdfPath);
+        } catch (_err) {
+          // Ignore cleanup errors
+        }
       }
 
       for (const photoFile of photoFiles) {

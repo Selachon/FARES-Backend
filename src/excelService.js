@@ -39,11 +39,11 @@ class ExcelService {
       this.setCellValue(mainSheet, 'P11', this.formatDate(data.datosInforme?.fechaInspeccion));
 
       // === DATOS DEL CLIENTE ===
-      this.setCellValue(mainSheet, 'H7', data.datosCliente?.cliente);
-      this.setCellValue(mainSheet, 'H8', data.datosCliente?.nit);
-      this.setCellValue(mainSheet, 'H9', data.datosCliente?.direccion);
-      this.setCellValue(mainSheet, 'H10', data.datosCliente?.ciudad);
-      this.setCellValue(mainSheet, 'H11', data.datosCliente?.telefono);
+      this.setCellValue(mainSheet, 'J7', data.datosCliente?.cliente);
+      this.setCellValue(mainSheet, 'J8', data.datosCliente?.nit);
+      this.setCellValue(mainSheet, 'J9', data.datosCliente?.direccion);
+      this.setCellValue(mainSheet, 'J10', data.datosCliente?.ciudad);
+      this.setCellValue(mainSheet, 'J11', data.datosCliente?.telefono);
 
       // === INFORMACIÓN DEL ÍTEM ===
       this.setCellValueWithDefault(mainSheet, 'D15', data.informacionItem?.numeroSerie, 'NR');
@@ -63,6 +63,13 @@ class ExcelService {
       this.setCellValueWithDefault(mainSheet, 'D28', direccionInspeccion, 'NR');
 
       // === ÍTEMS A EVALUAR (columnas J, K, L para C, NC, NA) ===
+      // En vez de X, pintamos la celda con el color del encabezado
+      const itemFillColors = {
+        C: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF92D050' } },  // Verde
+        NC: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF0000' } }, // Rojo
+        NA: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } }, // Amarillo
+      };
+
       if (data.itemsEvaluar) {
         const itemsMap = {
           hermeticidad: 16,
@@ -82,11 +89,14 @@ class ExcelService {
           medicionEspesores: 30,
         };
 
+        const colMap = { C: 'J', NC: 'K', NA: 'L' };
+
         for (const [key, row] of Object.entries(itemsMap)) {
           const value = data.itemsEvaluar[key];
-          if (value === 'C') this.setCellValue(mainSheet, `J${row}`, 'X');
-          else if (value === 'NC') this.setCellValue(mainSheet, `K${row}`, 'X');
-          else if (value === 'NA') this.setCellValue(mainSheet, `L${row}`, 'X');
+          if (value && colMap[value]) {
+            const cell = mainSheet.getCell(`${colMap[value]}${row}`);
+            cell.fill = itemFillColors[value];
+          }
         }
       }
 
@@ -112,11 +122,23 @@ class ExcelService {
       }
 
       // === FIRMAS Y RESULTADO ===
-      this.setCellValue(mainSheet, 'N34', data.inspector);
+      this.setCellValue(mainSheet, 'N36', data.inspector);
       this.setCellValue(mainSheet, 'N39', data.directorTecnico);
       this.setCellValue(mainSheet, 'G41', data.resolucion);
       this.setCellValue(mainSheet, 'Q41', data.articulos);
       this.setCellValue(mainSheet, 'G43', data.resultado);
+
+      // Aplicar color de fondo al resultado según guía O56:R59
+      const resultadoCell = mainSheet.getCell('G43');
+      const resultadoNorm = String(data.resultado || '').toUpperCase().trim();
+      const resultadoColors = {
+        'CUMPLE': { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF92D050' } },
+        'NO CUMPLE': { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF0000' } },
+        'SIN CONCEPTO': { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFBFBFBF' } },
+      };
+      if (resultadoColors[resultadoNorm]) {
+        resultadoCell.fill = resultadoColors[resultadoNorm];
+      }
 
       // === OBSERVACIONES (en la celda de observaciones) ===
       const observaciones = data.reporteEvaluacion?.observacionesRecomendaciones || '-';
@@ -148,11 +170,13 @@ class ExcelService {
     }
   }
 
-  insertPhotoRecords(workbook, photos) {
+  insertPhotoRecords(workbook, photos, options = {}) {
     if (!Array.isArray(photos) || photos.length === 0) return;
 
     const photosSheet = workbook.getWorksheet('Registros Fotográficos');
     if (!photosSheet) return;
+
+    const excludedCategories = new Set(options.excludeCategories || []);
 
     const slotsByCategory = {
       placa_identificacion: ['B5:D9', 'E5:G9'],
@@ -178,6 +202,8 @@ class ExcelService {
     };
 
     for (const [category, slots] of Object.entries(slotsByCategory)) {
+      if (excludedCategories.has(category)) continue;
+
       const categoryPhotos = photos.filter((photo) => photo?.category === category);
       if (categoryPhotos.length === 0) continue;
 
@@ -274,7 +300,16 @@ class ExcelService {
         orientation: 'portrait',
         fitToPage: true,
         fitToWidth: 1,
-        fitToHeight: 1,
+        fitToHeight: 0,
+        horizontalCentered: true,
+        margins: {
+          top: 0.15,
+          bottom: 0.15,
+          left: 0.15,
+          right: 0.15,
+          header: 0,
+          footer: 0,
+        },
       };
     }
 
