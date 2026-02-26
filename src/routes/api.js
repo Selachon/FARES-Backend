@@ -802,7 +802,9 @@ router.post(
     }
 
     // 1. Fill Excel template
+    logger.info("Step 1: Filling Excel template", { serial: draftData.serial });
     const workbook = await excelService.fillTemplate(inspectionData);
+    logger.info("Step 1 complete: Excel template filled");
 
     // 2. Prepare temp files
     const tempDir = path.join(__dirname, '..', 'uploads');
@@ -816,26 +818,30 @@ router.post(
 
     let draft;
     try {
+      logger.info("Step 2: Saving main Excel workbook");
       await excelService.saveWorkbook(workbook, excelPath);
-      logger.info("Excel generated for app draft", { excelPath });
+      logger.info("Step 2 complete: Excel saved", { excelPath });
 
+      logger.info("Step 3: Cloning workbook for PDF");
       const pdfWorkbook = await excelService.cloneWorkbook(workbook);
       excelService.prepareWorkbookForPdf(pdfWorkbook, [
         'Prueba Hidrostática',
         'SOPORTE',
       ]);
       await excelService.saveWorkbook(pdfWorkbook, pdfSourceExcelPath);
-      logger.info("PDF source workbook ready", { pdfSourceExcelPath });
+      logger.info("Step 3 complete: PDF source ready", { pdfSourceExcelPath });
 
+      logger.info("Step 4: Converting Excel to PDF via Google Sheets");
       await driveService.convertExcelToPdf(pdfSourceExcelPath, pdfPath);
-      logger.info("PDF generated from Excel", { pdfPath });
+      logger.info("Step 4 complete: PDF generated", { pdfPath });
 
       const serialForName = draftData.serial || 'INSPECCION';
       const empresaForName = draftData.empresa || 'DRAFT';
       const numCertForName = draftData.numCert || 'DRAFT';
       const excelFileName = `${empresaForName}_${numCertForName}_${serialForName}_${timestamp}.xlsx`;
 
-      // 4. Create draft linking only PDF in `informes`
+      // 5. Create draft linking only PDF in `informes`
+      logger.info("Step 5: Creating draft with PDF in informes");
       const files = {
         informes: [{
           path: pdfPath,
@@ -845,6 +851,7 @@ router.post(
       };
 
       draft = await draftService.createDraft(draftData, files);
+      logger.info("Step 5 complete: Draft created", { draftId: draft?.id });
       logger.info("App draft sync completed", {
         draftId: draft?.id,
         elapsedMs: Date.now() - startedAt,
