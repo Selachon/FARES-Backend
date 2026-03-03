@@ -51,6 +51,11 @@ class DriveService {
   // Cache de configuración de carpetas para reducir consultas a BD
   driveFoldersCache = null;
   driveFoldersCacheUntil = 0;
+  
+  // Cache de carpetas creadas en Drive para evitar búsquedas repetidas
+  // Key: "parentId:folderName", Value: { id, name, webViewLink, cachedAt }
+  folderCache = new Map();
+  FOLDER_CACHE_TTL = 10 * 60 * 1000; // 10 minutos
 
   
   // Obtener configuración de carpetas de Drive desde BD con caché
@@ -149,13 +154,35 @@ class DriveService {
     });
   }
 
-  // Asegurar que existe una carpeta (crear si no existe)
+  // Asegurar que existe una carpeta (crear si no existe) - con cache
   async ensureFolder(name, parentFolderId) {
+    const cacheKey = `${parentFolderId}:${name}`;
+    const now = Date.now();
+    
+    // Verificar cache
+    const cached = this.folderCache.get(cacheKey);
+    if (cached && (now - cached.cachedAt) < this.FOLDER_CACHE_TTL) {
+      return { id: cached.id, name: cached.name, webViewLink: cached.webViewLink };
+    }
+    
+    // Buscar en Drive
     const existing = await this.findFolderByName(name, parentFolderId);
     if (existing) {
+      // Guardar en cache
+      this.folderCache.set(cacheKey, { ...existing, cachedAt: now });
       return existing;
     }
-    return this.createFolder(name, parentFolderId);
+    
+    // Crear carpeta
+    const created = await this.createFolder(name, parentFolderId);
+    // Guardar en cache
+    this.folderCache.set(cacheKey, { ...created, cachedAt: now });
+    return created;
+  }
+  
+  // Limpiar cache de carpetas (útil si se renombran o eliminan)
+  clearFolderCache() {
+    this.folderCache.clear();
   }
 
   // Mover archivo a otra carpeta
@@ -275,7 +302,7 @@ class DriveService {
     return parentFromDb || config.google.drive.parentFolderId;
   }
 
-  // Asegurar árbol de carpetas para un certificado
+  // Asegurar árbol de carpetas para un certificado (optimizado)
   async ensureCertificateFolderTree(numCert) {
     const parentFolderId = await this.getParentFolderId();
     
@@ -286,40 +313,29 @@ class DriveService {
     // Crear/obtener carpeta raíz del certificado
     const rootFolder = await this.ensureFolder(String(numCert), parentFolderId);
     
-    // Crear/obtener subcarpetas
+    // Crear subcarpetas principales en paralelo
     const [obseletosFolder, registrosFotograficosFolder] = await Promise.all([
       this.ensureFolder("Obsoletos", rootFolder.id),
       this.ensureFolder("Registros fotográficos", rootFolder.id),
     ]);
     
-    // Crear subcarpetas de secciones fotográficas
-    const photoSections = [
-      "Placa",
-      "Area de inspeccion",
-      "Superficie",
-      "Soldaduras",
-      "Roscas y conexiones",
-      "Hermeticidad",
-      "Soportes",
-      "Revision interna",
-      "Prueba hidrostatica",
-      "Medicion espesores",
-      "Proteccion catodica",
-    ];
-    
-    const sectionFolders = {};
-    for (const section of photoSections) {
-      const folder = await this.ensureFolder(section, registrosFotograficosFolder.id);
-      sectionFolders[section] = folder.id;
-    }
+    // Las subcarpetas de secciones fotográficas se crean bajo demanda (lazy)
+    // para no bloquear la creación del certificado
+    // Se crearán cuando se suban fotos a cada sección
     
     return {
       rootFolderId: rootFolder.id,
       rootFolderLink: rootFolder.webViewLink,
       obsoletosFolderId: obseletosFolder.id,
       registrosFotograficosFolderId: registrosFotograficosFolder.id,
-      sectionFolders,
+      // Las sectionFolders se crean on-demand
+      sectionFolders: {},
     };
+  }
+  
+  // Obtener o crear carpeta de sección fotográfica bajo demanda
+  async ensurePhotoSectionFolder(registrosFotograficosFolderId, sectionName) {
+    return this.ensureFolder(sectionName, registrosFotograficosFolderId);
   }
 
   // Generar nombre de archivo con prefijo
@@ -374,6 +390,7 @@ class DriveService {
     mimeType,
     appProperties = {},
     folderId,
+    skipFolderValidation = false,
   }) {
     performanceMonitor.trackDriveOperation();
 
@@ -386,8 +403,10 @@ class DriveService {
       );
     }
 
-    
-    await this.validateFolderAccess(targetFolder);
+    // Solo validar acceso si no se indica saltar (optimización para uploads múltiples)
+    if (!skipFolderValidation) {
+      await this.validateFolderAccess(targetFolder);
+    }
 
     
     const media = { mimeType, body: fs.createReadStream(localPath) };
@@ -406,8 +425,11 @@ class DriveService {
         supportsAllDrives: true,
       });
 
+      // Establecer permisos en background (no bloquea el upload)
+      this.setPermissions(response.data.id).catch((err) => {
+        logger.warn("Failed to set permissions", { fileId: response.data.id, error: err.message });
+      });
       
-      await this.setPermissions(response.data.id);
       return response.data;
     });
   }
@@ -494,13 +516,14 @@ class DriveService {
     };
   }
 
-  // Nuevo flujo: Subir archivos de certificado al árbol de carpetas por numCert
+  // Nuevo flujo: Subir archivos de certificado al árbol de carpetas por numCert (optimizado)
   async uploadCertificateFiles(files, meta, empresa, numCert, serial, existingStorage = null) {
     const timestamp = Date.now();
     const results = {
       informes: null,
       certificados: null,
       anexos: null,
+      formatos: null,
       driveFolder: null,
     };
     
@@ -516,34 +539,44 @@ class DriveService {
     // Configuración de archivos a subir
     const fileConfigs = [
       { fileKey: "informes", prefix: "INF", resultKey: "informes" },
+      { fileKey: "formatos", prefix: "FOR", resultKey: "formatos" },
       { fileKey: "certificados", prefix: "CERT", resultKey: "certificados" },
       { fileKey: "anexos", prefix: "ANEXOS", resultKey: "anexos" },
-      // Mantener formatos para legacy
-      { fileKey: "formatos", prefix: "FOR", resultKey: "formatos" },
     ];
 
+    // Preparar uploads en paralelo
+    const uploadPromises = [];
+    
     for (const { fileKey, prefix, resultKey } of fileConfigs) {
       const file = pickFirst(files[fileKey]);
       if (!file) continue;
 
-      try {
-        const ext = this.getFileExtension(file.originalname);
-        const fileName = this.generateFileName(prefix, empresa, numCert, serial, timestamp, ext);
-        
-        const result = await this.uploadFile({
-          localPath: file.path,
-          fileName,
-          mimeType: file.mimetype || "application/pdf",
-          appProperties: meta,
-          folderId: rootFolderId,
-        });
-        
+      const ext = this.getFileExtension(file.originalname);
+      const fileName = this.generateFileName(prefix, empresa, numCert, serial, timestamp, ext);
+      
+      // Crear promesa de upload (skipFolderValidation porque ya validamos al crear árbol)
+      const uploadPromise = this.uploadFile({
+        localPath: file.path,
+        fileName,
+        mimeType: file.mimetype || "application/pdf",
+        appProperties: meta,
+        folderId: rootFolderId,
+        skipFolderValidation: true,
+      }).then((result) => {
         results[resultKey] = result.webViewLink;
         logger.info(`Uploaded ${prefix} file`, { fileName, link: result.webViewLink });
-      } catch (error) {
+        return { resultKey, success: true };
+      }).catch((error) => {
         logger.error(`Failed to upload ${prefix} file`, error);
         throw error;
-      }
+      });
+      
+      uploadPromises.push(uploadPromise);
+    }
+
+    // Ejecutar todos los uploads en paralelo
+    if (uploadPromises.length > 0) {
+      await Promise.all(uploadPromises);
     }
 
     // Retornar también storage para persistencia
