@@ -101,6 +101,234 @@ class DriveService {
     });
   }
 
+  // Obtener metadata completa de archivo (incluye createdTime para obsoletos)
+  async getFileMetadata(fileId) {
+    return retryOperation(async () => {
+      const response = await this.drive.files.get({
+        fileId,
+        fields: "id,name,parents,mimeType,driveId,createdTime,modifiedTime,description,webViewLink",
+        supportsAllDrives: true,
+      });
+      return response.data;
+    });
+  }
+
+  // Crear carpeta en Drive
+  async createFolder(name, parentFolderId) {
+    performanceMonitor.trackDriveOperation();
+    
+    return retryOperation(async () => {
+      const response = await this.drive.files.create({
+        requestBody: {
+          name,
+          mimeType: "application/vnd.google-apps.folder",
+          parents: parentFolderId ? [parentFolderId] : [],
+        },
+        fields: "id,name,webViewLink",
+        supportsAllDrives: true,
+      });
+      
+      // Establecer permisos en la carpeta
+      await this.setPermissions(response.data.id);
+      
+      return response.data;
+    });
+  }
+
+  // Buscar carpeta por nombre dentro de un padre
+  async findFolderByName(name, parentFolderId) {
+    return retryOperation(async () => {
+      const query = `name='${name}' and mimeType='application/vnd.google-apps.folder' and '${parentFolderId}' in parents and trashed=false`;
+      const response = await this.drive.files.list({
+        q: query,
+        fields: "files(id,name,webViewLink)",
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      });
+      return response.data.files?.[0] || null;
+    });
+  }
+
+  // Asegurar que existe una carpeta (crear si no existe)
+  async ensureFolder(name, parentFolderId) {
+    const existing = await this.findFolderByName(name, parentFolderId);
+    if (existing) {
+      return existing;
+    }
+    return this.createFolder(name, parentFolderId);
+  }
+
+  // Mover archivo a otra carpeta
+  async moveFile(fileId, newParentFolderId, removeFromCurrentParent = true) {
+    performanceMonitor.trackDriveOperation();
+    
+    return retryOperation(async () => {
+      // Obtener padres actuales
+      const current = await this.getFileInfo(fileId);
+      const currentParents = current.parents || [];
+      
+      const response = await this.drive.files.update({
+        fileId,
+        addParents: newParentFolderId,
+        removeParents: removeFromCurrentParent ? currentParents.join(",") : undefined,
+        fields: "id,name,parents,webViewLink",
+        supportsAllDrives: true,
+      });
+      
+      return response.data;
+    });
+  }
+
+  // Renombrar archivo
+  async renameFile(fileId, newName) {
+    performanceMonitor.trackDriveOperation();
+    
+    return retryOperation(async () => {
+      const response = await this.drive.files.update({
+        fileId,
+        requestBody: { name: newName },
+        fields: "id,name,webViewLink",
+        supportsAllDrives: true,
+      });
+      return response.data;
+    });
+  }
+
+  // Actualizar descripción de archivo
+  async updateFileDescription(fileId, description) {
+    performanceMonitor.trackDriveOperation();
+    
+    return retryOperation(async () => {
+      const response = await this.drive.files.update({
+        fileId,
+        requestBody: { description },
+        fields: "id,name,description",
+        supportsAllDrives: true,
+      });
+      return response.data;
+    });
+  }
+
+  // Mover archivo a obsoletos con renombre y descripción
+  async moveToObsoletos(fileId, obsoletosFolderId) {
+    // Obtener metadata del archivo
+    const metadata = await this.getFileMetadata(fileId);
+    const originalName = metadata.name || "archivo";
+    const createdTime = metadata.createdTime ? new Date(metadata.createdTime) : new Date();
+    
+    // Formatear fecha DD-MM-YY
+    const day = String(createdTime.getDate()).padStart(2, "0");
+    const month = String(createdTime.getMonth() + 1).padStart(2, "0");
+    const year = String(createdTime.getFullYear()).slice(-2);
+    const dateStr = `${day}-${month}-${year}`;
+    
+    // Construir nuevo nombre: "<nombre> (DD-MM-YY).ext"
+    const extMatch = originalName.match(/(\.[^.]+)$/);
+    const ext = extMatch ? extMatch[1] : "";
+    const nameWithoutExt = ext ? originalName.slice(0, -ext.length) : originalName;
+    const newName = `${nameWithoutExt} (${dateStr})${ext}`;
+    
+    // Formatear fecha para descripción DD-MM-YYYY
+    const fullYear = createdTime.getFullYear();
+    const descDateStr = `${day}-${month}-${fullYear}`;
+    const todayStr = this.formatDateDDMMYYYY(new Date());
+    
+    // Mover a obsoletos
+    await this.moveFile(fileId, obsoletosFolderId);
+    
+    // Renombrar
+    await this.renameFile(fileId, newName);
+    
+    // Actualizar descripción
+    const currentDesc = metadata.description || "";
+    const newDesc = currentDesc 
+      ? `${currentDesc} | Obsoleto el ${todayStr}`
+      : `Obsoleto el ${todayStr}`;
+    await this.updateFileDescription(fileId, newDesc);
+    
+    logger.info("File moved to obsoletos", {
+      fileId,
+      originalName,
+      newName,
+      obsoletosFolderId,
+    });
+    
+    return { fileId, newName, movedAt: todayStr };
+  }
+
+  // Formato DD-MM-YYYY
+  formatDateDDMMYYYY(date) {
+    const d = date instanceof Date ? date : new Date(date);
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${day}-${month}-${year}`;
+  }
+
+  // Obtener carpeta padre principal desde config
+  async getParentFolderId() {
+    const db = await connect();
+    const doc = await db.collection("config").findOne({ key: "driveParentFolder" });
+    const parentFromDb = doc?.value;
+    
+    // Fallback a config.js si no hay en DB
+    return parentFromDb || config.google.drive.parentFolderId;
+  }
+
+  // Asegurar árbol de carpetas para un certificado
+  async ensureCertificateFolderTree(numCert) {
+    const parentFolderId = await this.getParentFolderId();
+    
+    if (!parentFolderId) {
+      throw new Error("No se configuró carpeta padre principal de Drive");
+    }
+    
+    // Crear/obtener carpeta raíz del certificado
+    const rootFolder = await this.ensureFolder(String(numCert), parentFolderId);
+    
+    // Crear/obtener subcarpetas
+    const [obseletosFolder, registrosFotograficosFolder] = await Promise.all([
+      this.ensureFolder("Obsoletos", rootFolder.id),
+      this.ensureFolder("Registros fotográficos", rootFolder.id),
+    ]);
+    
+    // Crear subcarpetas de secciones fotográficas
+    const photoSections = [
+      "Placa",
+      "Area de inspeccion",
+      "Superficie",
+      "Soldaduras",
+      "Roscas y conexiones",
+      "Hermeticidad",
+      "Soportes",
+      "Revision interna",
+      "Prueba hidrostatica",
+      "Medicion espesores",
+      "Proteccion catodica",
+    ];
+    
+    const sectionFolders = {};
+    for (const section of photoSections) {
+      const folder = await this.ensureFolder(section, registrosFotograficosFolder.id);
+      sectionFolders[section] = folder.id;
+    }
+    
+    return {
+      rootFolderId: rootFolder.id,
+      rootFolderLink: rootFolder.webViewLink,
+      obsoletosFolderId: obseletosFolder.id,
+      registrosFotograficosFolderId: registrosFotograficosFolder.id,
+      sectionFolders,
+    };
+  }
+
+  // Generar nombre de archivo con prefijo
+  generateFileName(prefix, empresa, numCert, serial, timestamp, extension = ".pdf") {
+    const safeEmpresa = String(empresa || "").replace(/[^a-zA-Z0-9]/g, "_").toUpperCase();
+    const safeSerial = String(serial || "").replace(/[^a-zA-Z0-9]/g, "_").toUpperCase();
+    return `${prefix}_${safeEmpresa}_${numCert}_${safeSerial}_${timestamp}${extension}`;
+  }
+
     
   extractFileIdFromLink(link) {
     if (!link || link === "#") return null;
@@ -222,7 +450,8 @@ class DriveService {
   }
 
   
-  async uploadCertificateFiles(files, meta, empresa, numCert, serial) {
+  // LEGACY: Método anterior para compatibilidad con flujos existentes
+  async uploadCertificateFilesLegacy(files, meta, empresa, numCert, serial) {
     const timestamp = Date.now();
     const results = {};
     
@@ -263,6 +492,127 @@ class DriveService {
       formatos: results.for,
       certificados: results.cert,
     };
+  }
+
+  // Nuevo flujo: Subir archivos de certificado al árbol de carpetas por numCert
+  async uploadCertificateFiles(files, meta, empresa, numCert, serial, existingStorage = null) {
+    const timestamp = Date.now();
+    const results = {
+      informes: null,
+      certificados: null,
+      anexos: null,
+      driveFolder: null,
+    };
+    
+    // Asegurar árbol de carpetas
+    let storage = existingStorage;
+    if (!storage?.rootFolderId) {
+      storage = await this.ensureCertificateFolderTree(numCert);
+    }
+    
+    const rootFolderId = storage.rootFolderId;
+    results.driveFolder = storage.rootFolderLink || `https://drive.google.com/drive/folders/${rootFolderId}`;
+
+    // Configuración de archivos a subir
+    const fileConfigs = [
+      { fileKey: "informes", prefix: "INF", resultKey: "informes" },
+      { fileKey: "certificados", prefix: "CERT", resultKey: "certificados" },
+      { fileKey: "anexos", prefix: "ANEXOS", resultKey: "anexos" },
+      // Mantener formatos para legacy
+      { fileKey: "formatos", prefix: "FOR", resultKey: "formatos" },
+    ];
+
+    for (const { fileKey, prefix, resultKey } of fileConfigs) {
+      const file = pickFirst(files[fileKey]);
+      if (!file) continue;
+
+      try {
+        const ext = this.getFileExtension(file.originalname);
+        const fileName = this.generateFileName(prefix, empresa, numCert, serial, timestamp, ext);
+        
+        const result = await this.uploadFile({
+          localPath: file.path,
+          fileName,
+          mimeType: file.mimetype || "application/pdf",
+          appProperties: meta,
+          folderId: rootFolderId,
+        });
+        
+        results[resultKey] = result.webViewLink;
+        logger.info(`Uploaded ${prefix} file`, { fileName, link: result.webViewLink });
+      } catch (error) {
+        logger.error(`Failed to upload ${prefix} file`, error);
+        throw error;
+      }
+    }
+
+    // Retornar también storage para persistencia
+    results._storage = storage;
+    
+    return results;
+  }
+
+  // Reemplazar archivo existente (mover antiguo a obsoletos)
+  async replaceFile(existingLink, newFile, prefix, empresa, numCert, serial, storage) {
+    const timestamp = Date.now();
+    
+    // Mover archivo existente a obsoletos si hay link válido
+    if (existingLink && existingLink !== "#") {
+      const existingFileId = this.extractFileIdFromLink(existingLink);
+      if (existingFileId && storage?.obsoletosFolderId) {
+        try {
+          await this.moveToObsoletos(existingFileId, storage.obsoletosFolderId);
+        } catch (error) {
+          logger.warn("Could not move old file to obsoletos", {
+            fileId: existingFileId,
+            error: error.message,
+          });
+          // Continuar aunque falle el movimiento a obsoletos
+        }
+      }
+    }
+    
+    // Subir nuevo archivo
+    const ext = this.getFileExtension(newFile.originalname);
+    const fileName = this.generateFileName(prefix, empresa, numCert, serial, timestamp, ext);
+    
+    const result = await this.uploadFile({
+      localPath: newFile.path,
+      fileName,
+      mimeType: newFile.mimetype || "application/pdf",
+      appProperties: {
+        NumCert: String(numCert),
+        Serial: String(serial),
+      },
+      folderId: storage.rootFolderId,
+    });
+    
+    logger.info(`Replaced ${prefix} file`, { fileName, link: result.webViewLink });
+    
+    return result.webViewLink;
+  }
+
+  // Subir foto a carpeta de sección específica
+  async uploadPhotoToSection(photoFile, sectionName, storage) {
+    const sectionFolderId = storage.sectionFolders?.[sectionName];
+    if (!sectionFolderId) {
+      logger.warn("Section folder not found", { sectionName });
+      return null;
+    }
+    
+    const timestamp = Date.now();
+    const ext = this.getFileExtension(photoFile.originalname || ".jpg");
+    const fileName = `foto_${timestamp}${ext}`;
+    
+    const result = await this.uploadFile({
+      localPath: photoFile.path,
+      fileName,
+      mimeType: photoFile.mimetype || "image/jpeg",
+      appProperties: {},
+      folderId: sectionFolderId,
+    });
+    
+    return result.webViewLink;
   }
 
   async downloadUrlToFile(url, token, outputPath, maxRedirects = 5) {

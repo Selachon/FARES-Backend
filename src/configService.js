@@ -9,8 +9,63 @@ class ConfigService {
   constructor() {
     this.collectionName = "config";
   }
+
+  // Obtener carpeta padre principal de Drive
+  async getDriveParentFolder() {
+    try {
+      performanceMonitor.trackDbQuery();
+      return await cacheService.getOrSet(
+        "drive_parent_folder",
+        async () => {
+          const db = await connect();
+          const doc = await db.collection(this.collectionName).findOne({
+            key: "driveParentFolder"
+          });
+          return doc?.value || "";
+        },
+        15 * 60 * 1000
+      );
+    } catch (error) {
+      logger.error("Failed to get drive parent folder", error);
+      throw createError("Error obteniendo carpeta principal", 500);
+    }
+  }
+
+  // Actualizar carpeta padre principal de Drive
+  async updateDriveParentFolder(folderId) {
+    try {
+      if (!folderId || typeof folderId !== "string") {
+        throw createError("folderId requerido", 400);
+      }
+
+      performanceMonitor.trackDbQuery();
+      const db = await connect();
+
+      const sanitizedId = sanitizeString(folderId);
+
+      await db.collection(this.collectionName).updateOne(
+        { key: "driveParentFolder" },
+        {
+          $set: {
+            key: "driveParentFolder",
+            value: sanitizedId,
+            updatedAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
+
+      cacheService.clear("drive_parent_folder");
+      logger.info("Drive parent folder updated", { folderId: sanitizedId });
+      return { PARENT: sanitizedId };
+    } catch (error) {
+      if (error.statusCode) throw error;
+      logger.error("Failed to update drive parent folder", error);
+      throw createError("Fallo guardando carpeta principal", 500);
+    }
+  }
   
-  // Obtener configuración de carpetas de Drive con caché
+  // LEGACY: Obtener configuración de carpetas de Drive con caché (compatibilidad)
   async getDriveFolders() {
     try {
       performanceMonitor.trackDbQuery();
@@ -19,17 +74,28 @@ class ConfigService {
         "drive_folders_config",
         async () => {
           const db = await connect();
-          const doc = await db.collection(this.collectionName).findOne({ 
+          
+          // Primero intentar obtener la nueva config PARENT
+          const parentDoc = await db.collection(this.collectionName).findOne({
+            key: "driveParentFolder"
+          });
+          
+          // Luego obtener config legacy
+          const legacyDoc = await db.collection(this.collectionName).findOne({ 
             key: "driveFolders" 
           });
           
-          
           // Valores por defecto si no hay configuración
-          const folders = doc?.value || {
+          const folders = legacyDoc?.value || {
             INF: "",  // Informes
             FOR: "",  // Formatos
             CERT: ""  // Certificados
           };
+
+          // Agregar PARENT si existe
+          if (parentDoc?.value) {
+            folders.PARENT = parentDoc.value;
+          }
 
           return folders;
         },
@@ -41,12 +107,23 @@ class ConfigService {
     }
   }
 
-  
+  // LEGACY: Actualizar carpetas (compatibilidad + nuevo PARENT)
   async updateDriveFolders(folderUpdates) {
     try {
-      const { INF, FOR, CERT } = folderUpdates || {};
+      const { INF, FOR, CERT, PARENT } = folderUpdates || {};
       
+      // Si viene PARENT, usamos el nuevo método
+      if (PARENT !== undefined) {
+        await this.updateDriveParentFolder(PARENT);
+      }
+      
+      // Si no hay campos legacy, solo retornamos
       if (INF === undefined && FOR === undefined && CERT === undefined) {
+        if (PARENT !== undefined) {
+          // Ya actualizamos PARENT arriba
+          const parentFolder = await this.getDriveParentFolder();
+          return { PARENT: parentFolder };
+        }
         throw createError("No hay campos para actualizar", 400);
       }
 
@@ -80,6 +157,13 @@ class ConfigService {
 
       cacheService.clear("drive_folders_config");
       logger.info("Drive folders updated", merged);
+      
+      // Incluir PARENT en respuesta si existe
+      const parentFolder = await this.getDriveParentFolder();
+      if (parentFolder) {
+        merged.PARENT = parentFolder;
+      }
+      
       return merged;
     } catch (error) {
       if (error.statusCode) throw error;
