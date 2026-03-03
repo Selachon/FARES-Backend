@@ -110,7 +110,7 @@ class CertificateService {
         fechaCargue,
         empresa,
         assignedUsers,
-        resultado = "CUMBLE",
+        resultado = "CUMPLE",
         tipoEquipo,
         tipoInspeccion,
       } = certificateData;
@@ -135,22 +135,27 @@ class CertificateService {
         Serial: String(validatedData.serial),
       };
 
-      
-      const [uploadedLinks] = await Promise.all([
-        driveService.uploadCertificateFiles(
-          files,
-          meta,
-          validatedData.empresa,
-          validatedData.numCert,
-          validatedData.serial
-        )
-      ]);
+      // Usar nuevo flujo con árbol de carpetas
+      const uploadResult = await driveService.uploadCertificateFiles(
+        files,
+        meta,
+        validatedData.empresa,
+        validatedData.numCert,
+        validatedData.serial
+      );
+
+      // Extraer storage para persistencia
+      const storage = uploadResult?._storage || null;
+      delete uploadResult?._storage;
 
       const links = {
         informes: "#",
-        formatos: "#",
         certificados: "#",
-        ...(uploadedLinks || {}),
+        anexos: "#",
+        driveFolder: "#",
+        // Mantener formatos para compatibilidad legacy
+        formatos: "#",
+        ...(uploadResult || {}),
       };
 
       const db = await connect();
@@ -167,6 +172,8 @@ class CertificateService {
         status: "ACTIVO",
         renewedAt: null,
         links,
+        // Guardar storage de Drive para futuras operaciones
+        storage: storage || null,
         createdAt: new Date()
       };
 
@@ -180,7 +187,8 @@ class CertificateService {
       logger.info("Certificate created", {
         id: result.insertedId,
         numCert: validatedData.numCert,
-        empresa: validatedData.empresa
+        empresa: validatedData.empresa,
+        hasStorage: !!storage
       });
 
       
@@ -229,12 +237,21 @@ class CertificateService {
           updateData
         );
 
+        // Extraer storage si viene incluido
+        const newStorage = newLinks?._storage;
+        delete newLinks?._storage;
+
         const cleanedLinks = Object.fromEntries(
           Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
         );
 
         if (Object.keys(cleanedLinks).length > 0) {
           updates.links = { ...existing.links, ...cleanedLinks };
+        }
+
+        // Actualizar storage si se creó
+        if (newStorage && !existing.storage?.rootFolderId) {
+          updates.storage = newStorage;
         }
       }
 
@@ -377,14 +394,59 @@ class CertificateService {
     const effectiveEmpresa = sanitizeString(updates.empresa || existing.empresa);
     const effectiveNumCert = updates.numCert || existing.numCert;
     const effectiveSerial = updates.serial || existing.serial;
+    
+    // Obtener o crear storage
+    let storage = existing.storage;
+    if (!storage?.rootFolderId) {
+      storage = await driveService.ensureCertificateFolderTree(effectiveNumCert);
+    }
 
-    return driveService.uploadCertificateFiles(
-      files,
-      meta,
-      effectiveEmpresa,
-      effectiveNumCert,
-      effectiveSerial
-    );
+    const results = {};
+    const { pickFirst } = await import("./utils.js");
+
+    // Configuración de archivos con manejo de reemplazo
+    const fileConfigs = [
+      { fileKey: "informes", prefix: "INF", linkKey: "informes" },
+      { fileKey: "certificados", prefix: "CERT", linkKey: "certificados" },
+      { fileKey: "anexos", prefix: "ANEXOS", linkKey: "anexos" },
+      // Mantener formatos para legacy
+      { fileKey: "formatos", prefix: "FOR", linkKey: "formatos" },
+    ];
+
+    for (const { fileKey, prefix, linkKey } of fileConfigs) {
+      const file = pickFirst(files[fileKey]);
+      if (!file) continue;
+
+      // Si existe un archivo previo, moverlo a obsoletos
+      const existingLink = existing.links?.[linkKey];
+      
+      try {
+        const newLink = await driveService.replaceFile(
+          existingLink,
+          file,
+          prefix,
+          effectiveEmpresa,
+          effectiveNumCert,
+          effectiveSerial,
+          storage
+        );
+        results[linkKey] = newLink;
+      } catch (error) {
+        logger.error(`Failed to replace ${prefix} file`, error);
+        throw error;
+      }
+    }
+
+    // Agregar driveFolder si no existe
+    if (!existing.links?.driveFolder || existing.links.driveFolder === "#") {
+      results.driveFolder = storage.rootFolderLink || 
+        `https://drive.google.com/drive/folders/${storage.rootFolderId}`;
+    }
+
+    // Retornar también storage actualizado
+    results._storage = storage;
+
+    return results;
   }
 
   
@@ -412,7 +474,7 @@ class CertificateService {
       daysLeft: exp?.daysLeft ?? null,
       isExpiringSoon: !!exp?.isExpiringSoon,
 
-      links: certificate.links || { informes: "#", formatos: "#", certificados: "#" },
+      links: certificate.links || { informes: "#", formatos: "#", certificados: "#", anexos: "#", driveFolder: "#" },
     };
   }
 
