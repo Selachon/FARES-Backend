@@ -453,8 +453,9 @@ router.post(
   adminGuard,
   upload.fields([
     { name: "informes", maxCount: 1 },
-    { name: "formatos", maxCount: 1 },
+    { name: "formatos", maxCount: 1 },  // Legacy
     { name: "certificados", maxCount: 1 },
+    { name: "anexos", maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
     const certificate = await certificateService.createCertificate(
@@ -472,8 +473,9 @@ router.put(
   adminGuard,
   upload.fields([
     { name: "informes", maxCount: 1 },
-    { name: "formatos", maxCount: 1 },
+    { name: "formatos", maxCount: 1 },  // Legacy
     { name: "certificados", maxCount: 1 },
+    { name: "anexos", maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -511,8 +513,9 @@ router.post(
   adminGuard,
   upload.fields([
     { name: "informes", maxCount: 1 },
-    { name: "formatos", maxCount: 1 },
+    { name: "formatos", maxCount: 1 },  // Legacy
     { name: "certificados", maxCount: 1 },
+    { name: "anexos", maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
     const draft = await draftService.createDraft(req.body, req.files || {});
@@ -525,8 +528,9 @@ router.put(
   adminGuard,
   upload.fields([
     { name: "informes", maxCount: 1 },
-    { name: "formatos", maxCount: 1 },
+    { name: "formatos", maxCount: 1 },  // Legacy
     { name: "certificados", maxCount: 1 },
+    { name: "anexos", maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
