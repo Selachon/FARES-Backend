@@ -64,8 +64,20 @@ class DraftService {
   async createDraft(data, files = {}) {
     try {
       const db = await connect();
+      const localId = data.localId ? sanitizeString(data.localId) : null;
 
-      
+      // IDEMPOTENCY CHECK FIRST: Prevent duplicate uploads on retries
+      // Must happen BEFORE any side effects (file uploads)
+      if (localId) {
+        const existing = await db
+          .collection(this.collectionName)
+          .findOne({ localId });
+        if (existing) {
+          logger.info("Draft already exists, returning existing", { localId });
+          return this.normalizeDraft(existing);
+        }
+      }
+
       const doc = {
         numCert:
           data.numCert !== undefined && data.numCert !== ""
@@ -99,10 +111,21 @@ class DraftService {
         source: data.source || "offline_app",
         createdAt: new Date(),
         updatedAt: new Date(),
-        localId: data.localId ? sanitizeString(data.localId) : null,
+        localId,
       };
 
-      
+      // Validate enums before any uploads
+      if (doc.tipoEquipo && !this.isValidEnum(doc.tipoEquipo, ["TE", "CT"])) {
+        throw createError("tipoEquipo inválido. Usa TE o CT.", 400);
+      }
+      if (
+        doc.tipoInspeccion &&
+        !this.isValidEnum(doc.tipoInspeccion, ["PARCIAL", "TOTAL"])
+      ) {
+        throw createError("tipoInspeccion inválido. Usa PARCIAL o TOTAL.", 400);
+      }
+
+      // Now safe to upload files (after idempotency and validation checks)
       const hasFiles = files && Object.keys(files).length > 0;
       if (hasFiles) {
         const meta = {
@@ -133,26 +156,6 @@ class DraftService {
         if (storage) {
           doc.storage = storage;
         }
-      }
-
-      if (doc.localId) {
-        const existing = await db
-          .collection(this.collectionName)
-          .findOne({ localId: doc.localId });
-        if (existing) {
-          return this.normalizeDraft(existing);
-        }
-      }
-
-
-      if (doc.tipoEquipo && !this.isValidEnum(doc.tipoEquipo, ["TE", "CT"])) {
-        throw createError("tipoEquipo inválido. Usa TE o CT.", 400);
-      }
-      if (
-        doc.tipoInspeccion &&
-        !this.isValidEnum(doc.tipoInspeccion, ["PARCIAL", "TOTAL"])
-      ) {
-        throw createError("tipoInspeccion inválido. Usa PARCIAL o TOTAL.", 400);
       }
 
       const result = await db.collection(this.collectionName).insertOne(doc);

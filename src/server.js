@@ -13,7 +13,8 @@ import {
   requestLogger, 
   errorHandler, 
   notFoundHandler,
-  healthMiddleware 
+  healthMiddleware,
+  csrfProtection
 } from "./middleware.js";
 import apiRoutes from "./routes/api.js";
 
@@ -33,13 +34,14 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
-// Configurar middleware CORS global
-app.use(cors({
+// Configurar middleware CORS global con política consistente
+const corsOptions = {
   origin: config.cors.allowedOrigins,  // Orígenes permitidos desde config
   credentials: true                    // Permitir cookies y autenticación
-}));
-// Habilitar preflight OPTIONS para todas las rutas
-app.options("*", cors());
+};
+app.use(cors(corsOptions));
+// Habilitar preflight OPTIONS con las mismas restricciones de origen
+app.options("*", cors(corsOptions));
 
 // Aplicar middleware personalizado de CORS (validación adicional)
 app.use(corsMiddleware);
@@ -53,6 +55,10 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(morgan(config.env === "production" ? "combined" : "dev"));
 // Middleware personalizado de logging de peticiones
 app.use(requestLogger);
+
+// CSRF protection for state-changing requests (POST, PUT, PATCH, DELETE)
+// Validates Origin/Referer against allowed origins
+app.use(csrfProtection);
 
 // Rate limiter global: 200 peticiones por IP por minuto (protege contra DDoS/scraping)
 app.use(rateLimit({

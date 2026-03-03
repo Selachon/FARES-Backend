@@ -169,6 +169,14 @@ export const config = {
     appJwtExpiresIn: process.env.APP_JWT_EXPIRES_IN || "15m",
     // Compatibilidad temporal para clientes legados con solo x-app-key
     allowLegacyAppKey: process.env.ALLOW_LEGACY_APP_KEY === "1",
+    // Secreto para firmar enrollment tokens (provisión de dispositivos)
+    enrollmentSecret: process.env.ENROLLMENT_SECRET || process.env.JWT_SECRET,
+    // Tiempo de vida de enrollment tokens (default 7 días)
+    enrollmentTokenExpiresIn: process.env.ENROLLMENT_TOKEN_EXPIRES_IN || "7d",
+    // Requerir enrollment token para registro de dispositivos (default true en prod)
+    requireEnrollmentToken: process.env.REQUIRE_ENROLLMENT_TOKEN !== "0",
+    // Máximo de dispositivos por enrollment token
+    maxDevicesPerEnrollment: parseInt(process.env.MAX_DEVICES_PER_ENROLLMENT) || 5,
   },
 };
 

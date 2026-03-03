@@ -1,5 +1,8 @@
 .env
 .env.local
-uploads/
 get-token.js
 node_modules/
+
+# Uploaded files - NEVER commit user uploads
+uploads/*
+!uploads/.gitkeep
