@@ -196,6 +196,84 @@ export const notFoundHandler = (req, res) => {
   });
 };
 
+/**
+ * CSRF protection middleware using Origin/Referer validation.
+ * Only applies to state-changing methods (POST, PUT, PATCH, DELETE).
+ * Validates that requests come from allowed origins to prevent cross-site attacks.
+ */
+export const csrfProtection = (req, res, next) => {
+  // Skip CSRF check for safe methods (GET, HEAD, OPTIONS)
+  const safeMethods = ["GET", "HEAD", "OPTIONS"];
+  if (safeMethods.includes(req.method)) {
+    return next();
+  }
+
+  // Skip CSRF check for app endpoints using Bearer token (mobile app)
+  const authHeader = String(req.headers.authorization || "");
+  if (authHeader.startsWith("Bearer ")) {
+    return next();
+  }
+
+  // Get Origin or Referer header
+  const origin = req.headers.origin;
+  const referer = req.headers.referer;
+
+  // At least one must be present for state-changing requests with cookies
+  if (!origin && !referer) {
+    // Allow requests without origin/referer only if no session cookie present
+    // (likely API tool like Postman or server-to-server call)
+    const sessionCookie = req.cookies?.[config.jwt.cookie.name];
+    if (!sessionCookie) {
+      return next();
+    }
+    logger.warn("CSRF: Missing Origin/Referer on authenticated request", {
+      method: req.method,
+      url: req.url,
+      ip: req.ip
+    });
+    return res.status(403).json({
+      message: "Origen de solicitud no válido",
+      code: "CSRF_VALIDATION_FAILED"
+    });
+  }
+
+  // Extract hostname from Origin or Referer
+  let requestOrigin;
+  try {
+    const sourceUrl = origin || referer;
+    const parsed = new URL(sourceUrl);
+    requestOrigin = parsed.origin;
+  } catch {
+    logger.warn("CSRF: Invalid Origin/Referer format", {
+      origin,
+      referer,
+      method: req.method,
+      url: req.url
+    });
+    return res.status(403).json({
+      message: "Origen de solicitud no válido",
+      code: "CSRF_VALIDATION_FAILED"
+    });
+  }
+
+  // Check against allowed origins
+  if (!config.cors.allowedOrigins.includes(requestOrigin)) {
+    logger.warn("CSRF: Origin not in allowlist", {
+      requestOrigin,
+      allowedOrigins: config.cors.allowedOrigins,
+      method: req.method,
+      url: req.url,
+      ip: req.ip
+    });
+    return res.status(403).json({
+      message: "Origen de solicitud no permitido",
+      code: "CSRF_ORIGIN_DENIED"
+    });
+  }
+
+  next();
+};
+
 // Middleware de guard para la app móvil offline
 // Requiere header x-app-key con clave de API válida
 export const appGuard = (req, res, next) => {

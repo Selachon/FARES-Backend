@@ -59,6 +59,20 @@ class CacheService {
     }
   }
 
+  /**
+   * Clear all cache entries that start with a given prefix.
+   * Useful for invalidating user-scoped caches when roles/assignments change.
+   */
+  clearPrefix(prefix) {
+    if (!prefix) return;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.cache.delete(key);
+        this.ttl.delete(key);
+      }
+    }
+  }
+
   async getOrSet(key, fetchFn, ttl = this.defaultTTL) {
     let value = this.get(key);
     

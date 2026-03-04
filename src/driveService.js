@@ -1,5 +1,5 @@
-// Servicio de integración con Google Drive
-// Maneja autenticación OAuth, subida, descarga y gestión de archivos en Google Drive
+// Google Drive integration service.
+// Handles OAuth authentication plus file and folder operations.
 import { google } from "googleapis";
 import fs from "fs";
 import https from "https";
@@ -15,29 +15,29 @@ class DriveService {
     this.initializeAuth();
   }
 
-  // Inicializar autenticación OAuth2 con Google
+  // Initialize OAuth2 client and warm up token access.
   initializeAuth() {
-    // Crear cliente OAuth2 con credenciales de config
+    // Build OAuth2 client from configured credentials.
     this.oauth2 = new google.auth.OAuth2(
       config.google.oauth.clientId,
       config.google.oauth.clientSecret,
     );
-    // Establecer credenciales con token de refresco
+    // Use refresh token so access tokens are rotated automatically.
     this.oauth2.setCredentials({
       refresh_token: config.google.oauth.refreshToken,
     });
 
     
-    // Crear cliente de Drive API v3 con autenticación
+    // Create Drive API v3 client.
     this.drive = google.drive({ version: "v3", auth: this.oauth2 });
 
     
-    // Realizar calentamiento de autenticación para verificar credenciales
+    // Trigger a lightweight token request to fail fast on bad credentials.
     this.warmUpAuth();
   }
 
   
-  // Calentamiento de autenticación para verificar credenciales al iniciar
+  // Verifies OAuth credentials during service startup.
   async warmUpAuth() {
     try {
       await this.oauth2.getAccessToken();
@@ -48,17 +48,22 @@ class DriveService {
   }
 
   
-  // Cache de configuración de carpetas para reducir consultas a BD
+  // Cache Drive folder config to reduce database reads.
   driveFoldersCache = null;
   driveFoldersCacheUntil = 0;
+  
+  // Cache discovered/created folders to avoid repeated Drive lookups.
+  // Key format: "parentId:folderName".
+  folderCache = new Map();
+  FOLDER_CACHE_TTL = 10 * 60 * 1000; // 10 minutes.
 
   
-  // Obtener configuración de carpetas de Drive desde BD con caché
+  // Load folder configuration from MongoDB with a short TTL cache.
   async getDriveFolders() {
     const now = Date.now();
 
     
-    // Usar caché si está vigente (1 minuto)
+    // Reuse cached value while still valid (1 minute).
     if (this.driveFoldersCache && now < this.driveFoldersCacheUntil) {
       return this.driveFoldersCache;
     }
@@ -66,16 +71,16 @@ class DriveService {
     try {
       const db = await connect();
 
-      // Obtener configuración desde colección config
+      // Read driveFolders from the config collection.
       const doc = await db
         .collection("config")
         .findOne({ key: "driveFolders" }, { projection: { _id: 0, value: 1 } });
 
       const folders = doc?.value || {};
 
-      // Actualizar caché
+      // Refresh cache window.
       this.driveFoldersCache = folders;
-      this.driveFoldersCacheUntil = now + 60_000; // 1 minuto de caché
+      this.driveFoldersCacheUntil = now + 60_000; // 1 minute cache TTL.
 
       return folders;
     } catch (error) {
@@ -99,6 +104,243 @@ class DriveService {
       });
       return response.data;
     });
+  }
+
+  // Retrieve extended metadata used by archival flows.
+  async getFileMetadata(fileId) {
+    return retryOperation(async () => {
+      const response = await this.drive.files.get({
+        fileId,
+        fields: "id,name,parents,mimeType,driveId,createdTime,modifiedTime,description,webViewLink",
+        supportsAllDrives: true,
+      });
+      return response.data;
+    });
+  }
+
+  // Create a folder and apply sharing permissions.
+  async createFolder(name, parentFolderId) {
+    performanceMonitor.trackDriveOperation();
+    
+    return retryOperation(async () => {
+      const response = await this.drive.files.create({
+        requestBody: {
+          name,
+          mimeType: "application/vnd.google-apps.folder",
+          parents: parentFolderId ? [parentFolderId] : [],
+        },
+        fields: "id,name,webViewLink",
+        supportsAllDrives: true,
+      });
+      
+      // Keep folder ACLs aligned with configured sharing policy.
+      await this.setPermissions(response.data.id);
+      
+      return response.data;
+    });
+  }
+
+  // Find a child folder by name under a parent folder.
+  async findFolderByName(name, parentFolderId) {
+    return retryOperation(async () => {
+      const query = `name='${name}' and mimeType='application/vnd.google-apps.folder' and '${parentFolderId}' in parents and trashed=false`;
+      const response = await this.drive.files.list({
+        q: query,
+        fields: "files(id,name,webViewLink)",
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      });
+      return response.data.files?.[0] || null;
+    });
+  }
+
+  // Return an existing folder or create it, with cache short-circuiting.
+  async ensureFolder(name, parentFolderId) {
+    const cacheKey = `${parentFolderId}:${name}`;
+    const now = Date.now();
+    
+    // Check local cache first.
+    const cached = this.folderCache.get(cacheKey);
+    if (cached && (now - cached.cachedAt) < this.FOLDER_CACHE_TTL) {
+      return { id: cached.id, name: cached.name, webViewLink: cached.webViewLink };
+    }
+    
+    // Fallback to Drive search.
+    const existing = await this.findFolderByName(name, parentFolderId);
+    if (existing) {
+      // Cache positive lookup.
+      this.folderCache.set(cacheKey, { ...existing, cachedAt: now });
+      return existing;
+    }
+    
+    // Create when not found.
+    const created = await this.createFolder(name, parentFolderId);
+    // Cache created folder metadata.
+    this.folderCache.set(cacheKey, { ...created, cachedAt: now });
+    return created;
+  }
+  
+  // Clear cached folder references after structural Drive changes.
+  clearFolderCache() {
+    this.folderCache.clear();
+  }
+
+  // Move a file to a new parent folder.
+  async moveFile(fileId, newParentFolderId, removeFromCurrentParent = true) {
+    performanceMonitor.trackDriveOperation();
+    
+    return retryOperation(async () => {
+      // Read current parents to support optional removeParents.
+      const current = await this.getFileInfo(fileId);
+      const currentParents = current.parents || [];
+      
+      const response = await this.drive.files.update({
+        fileId,
+        addParents: newParentFolderId,
+        removeParents: removeFromCurrentParent ? currentParents.join(",") : undefined,
+        fields: "id,name,parents,webViewLink",
+        supportsAllDrives: true,
+      });
+      
+      return response.data;
+    });
+  }
+
+  // Rename a Drive file.
+  async renameFile(fileId, newName) {
+    performanceMonitor.trackDriveOperation();
+    
+    return retryOperation(async () => {
+      const response = await this.drive.files.update({
+        fileId,
+        requestBody: { name: newName },
+        fields: "id,name,webViewLink",
+        supportsAllDrives: true,
+      });
+      return response.data;
+    });
+  }
+
+  // Update file description metadata.
+  async updateFileDescription(fileId, description) {
+    performanceMonitor.trackDriveOperation();
+    
+    return retryOperation(async () => {
+      const response = await this.drive.files.update({
+        fileId,
+        requestBody: { description },
+        fields: "id,name,description",
+        supportsAllDrives: true,
+      });
+      return response.data;
+    });
+  }
+
+  // Archive a file into Obsoletos with traceable name and description.
+  async moveToObsoletos(fileId, obsoletosFolderId) {
+    // Read source metadata before modifying file state.
+    const metadata = await this.getFileMetadata(fileId);
+    const originalName = metadata.name || "archivo";
+    const createdTime = metadata.createdTime ? new Date(metadata.createdTime) : new Date();
+    
+    // Build short date suffix: DD-MM-YY.
+    const day = String(createdTime.getDate()).padStart(2, "0");
+    const month = String(createdTime.getMonth() + 1).padStart(2, "0");
+    const year = String(createdTime.getFullYear()).slice(-2);
+    const dateStr = `${day}-${month}-${year}`;
+    
+    // Rename format: "<name> (DD-MM-YY).ext".
+    const extMatch = originalName.match(/(\.[^.]+)$/);
+    const ext = extMatch ? extMatch[1] : "";
+    const nameWithoutExt = ext ? originalName.slice(0, -ext.length) : originalName;
+    const newName = `${nameWithoutExt} (${dateStr})${ext}`;
+    
+    // Build full date for description trail.
+    const fullYear = createdTime.getFullYear();
+    const descDateStr = `${day}-${month}-${fullYear}`;
+    const todayStr = this.formatDateDDMMYYYY(new Date());
+    
+    // Move file to obsolete folder first.
+    await this.moveFile(fileId, obsoletosFolderId);
+    
+    // Then rename to preserve original chronology.
+    await this.renameFile(fileId, newName);
+    
+    // Append archival marker to description.
+    const currentDesc = metadata.description || "";
+    const newDesc = currentDesc 
+      ? `${currentDesc} | Obsoleto el ${todayStr}`
+      : `Obsoleto el ${todayStr}`;
+    await this.updateFileDescription(fileId, newDesc);
+    
+    logger.info("File moved to obsoletos", {
+      fileId,
+      originalName,
+      newName,
+      obsoletosFolderId,
+    });
+    
+    return { fileId, newName, movedAt: todayStr };
+  }
+
+  // Formats dates as DD-MM-YYYY for user-facing metadata.
+  formatDateDDMMYYYY(date) {
+    const d = date instanceof Date ? date : new Date(date);
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${day}-${month}-${year}`;
+  }
+
+  // Resolve root Drive folder from DB config with env fallback.
+  async getParentFolderId() {
+    const db = await connect();
+    const doc = await db.collection("config").findOne({ key: "driveParentFolder" });
+    const parentFromDb = doc?.value;
+    
+    // Fallback to static config when DB value is missing.
+    return parentFromDb || config.google.drive.parentFolderId;
+  }
+
+  // Ensure the root folder tree exists for a certificate.
+  async ensureCertificateFolderTree(numCert) {
+    const parentFolderId = await this.getParentFolderId();
+    
+    if (!parentFolderId) {
+      throw new Error("No se configuró carpeta padre principal de Drive");
+    }
+    
+    // Create or reuse certificate root folder.
+    const rootFolder = await this.ensureFolder(String(numCert), parentFolderId);
+    
+    // Create mandatory child folders in parallel.
+    const [obseletosFolder, registrosFotograficosFolder] = await Promise.all([
+      this.ensureFolder("Obsoletos", rootFolder.id),
+      this.ensureFolder("Registros fotográficos", rootFolder.id),
+    ]);
+    
+    // Section folders are created lazily when photos are uploaded.
+    
+    return {
+      rootFolderId: rootFolder.id,
+      rootFolderLink: rootFolder.webViewLink,
+      obsoletosFolderId: obseletosFolder.id,
+      registrosFotograficosFolderId: registrosFotograficosFolder.id,
+      // Section folder IDs are populated on demand.
+      sectionFolders: {},
+    };
+  }
+  
+  // Ensure folder for one photo section.
+  async ensurePhotoSectionFolder(registrosFotograficosFolderId, sectionName) {
+    return this.ensureFolder(sectionName, registrosFotograficosFolderId);
+  }
+
+  // Build deterministic upload names for traceability.
+  generateFileName(prefix, empresa, numCert, serial, timestamp, extension = ".pdf") {
+    const safeEmpresa = String(empresa || "").replace(/[^a-zA-Z0-9]/g, "_").toUpperCase();
+    const safeSerial = String(serial || "").replace(/[^a-zA-Z0-9]/g, "_").toUpperCase();
+    return `${prefix}_${safeEmpresa}_${numCert}_${safeSerial}_${timestamp}${extension}`;
   }
 
     
@@ -146,6 +388,7 @@ class DriveService {
     mimeType,
     appProperties = {},
     folderId,
+    skipFolderValidation = false,
   }) {
     performanceMonitor.trackDriveOperation();
 
@@ -158,8 +401,10 @@ class DriveService {
       );
     }
 
-    
-    await this.validateFolderAccess(targetFolder);
+  // Skip revalidation when folder access was already verified for the batch.
+    if (!skipFolderValidation) {
+      await this.validateFolderAccess(targetFolder);
+    }
 
     
     const media = { mimeType, body: fs.createReadStream(localPath) };
@@ -178,8 +423,11 @@ class DriveService {
         supportsAllDrives: true,
       });
 
+      // Apply permissions asynchronously to keep uploads responsive.
+      this.setPermissions(response.data.id).catch((err) => {
+        logger.warn("Failed to set permissions", { fileId: response.data.id, error: err.message });
+      });
       
-      await this.setPermissions(response.data.id);
       return response.data;
     });
   }
@@ -222,7 +470,8 @@ class DriveService {
   }
 
   
-  async uploadCertificateFiles(files, meta, empresa, numCert, serial) {
+  // Legacy upload flow kept for backward compatibility.
+  async uploadCertificateFilesLegacy(files, meta, empresa, numCert, serial) {
     const timestamp = Date.now();
     const results = {};
     
@@ -263,6 +512,138 @@ class DriveService {
       formatos: results.for,
       certificados: results.cert,
     };
+  }
+
+  // Preferred upload flow: store all certificate files under its folder tree.
+  async uploadCertificateFiles(files, meta, empresa, numCert, serial, existingStorage = null) {
+    const timestamp = Date.now();
+    const results = {
+      informes: null,
+      certificados: null,
+      anexos: null,
+      formatos: null,
+      driveFolder: null,
+    };
+    
+    // Ensure storage structure is available.
+    let storage = existingStorage;
+    if (!storage?.rootFolderId) {
+      storage = await this.ensureCertificateFolderTree(numCert);
+    }
+    
+    const rootFolderId = storage.rootFolderId;
+    results.driveFolder = storage.rootFolderLink || `https://drive.google.com/drive/folders/${rootFolderId}`;
+
+    // Expected upload slots.
+    const fileConfigs = [
+      { fileKey: "informes", prefix: "INF", resultKey: "informes" },
+      { fileKey: "formatos", prefix: "FOR", resultKey: "formatos" },
+      { fileKey: "certificados", prefix: "CERT", resultKey: "certificados" },
+      { fileKey: "anexos", prefix: "ANEXOS", resultKey: "anexos" },
+    ];
+
+    // Build parallel uploads.
+    const uploadPromises = [];
+    
+    for (const { fileKey, prefix, resultKey } of fileConfigs) {
+      const file = pickFirst(files[fileKey]);
+      if (!file) continue;
+
+      const ext = this.getFileExtension(file.originalname);
+      const fileName = this.generateFileName(prefix, empresa, numCert, serial, timestamp, ext);
+      
+      // Skip folder validation because tree creation already checked access.
+      const uploadPromise = this.uploadFile({
+        localPath: file.path,
+        fileName,
+        mimeType: file.mimetype || "application/pdf",
+        appProperties: meta,
+        folderId: rootFolderId,
+        skipFolderValidation: true,
+      }).then((result) => {
+        results[resultKey] = result.webViewLink;
+        logger.info(`Uploaded ${prefix} file`, { fileName, link: result.webViewLink });
+        return { resultKey, success: true };
+      }).catch((error) => {
+        logger.error(`Failed to upload ${prefix} file`, error);
+        throw error;
+      });
+      
+      uploadPromises.push(uploadPromise);
+    }
+
+    // Execute all uploads concurrently.
+    if (uploadPromises.length > 0) {
+      await Promise.all(uploadPromises);
+    }
+
+    // Return storage metadata so callers can persist folder references.
+    results._storage = storage;
+    
+    return results;
+  }
+
+  // Replace an existing file and archive the old version when possible.
+  async replaceFile(existingLink, newFile, prefix, empresa, numCert, serial, storage) {
+    const timestamp = Date.now();
+    
+    // Archive previous file if a valid link is present.
+    if (existingLink && existingLink !== "#") {
+      const existingFileId = this.extractFileIdFromLink(existingLink);
+      if (existingFileId && storage?.obsoletosFolderId) {
+        try {
+          await this.moveToObsoletos(existingFileId, storage.obsoletosFolderId);
+        } catch (error) {
+          logger.warn("Could not move old file to obsoletos", {
+            fileId: existingFileId,
+            error: error.message,
+          });
+          // Replacement should continue even if archival fails.
+        }
+      }
+    }
+    
+    // Upload replacement file.
+    const ext = this.getFileExtension(newFile.originalname);
+    const fileName = this.generateFileName(prefix, empresa, numCert, serial, timestamp, ext);
+    
+    const result = await this.uploadFile({
+      localPath: newFile.path,
+      fileName,
+      mimeType: newFile.mimetype || "application/pdf",
+      appProperties: {
+        NumCert: String(numCert),
+        Serial: String(serial),
+      },
+      folderId: storage.rootFolderId,
+    });
+    
+    logger.info(`Replaced ${prefix} file`, { fileName, link: result.webViewLink });
+    
+    return result.webViewLink;
+  }
+
+  // Upload a photo into a specific section folder.
+  async uploadPhotoToSection(photoFile, sectionName, storage) {
+    const sectionFolderId = storage.sectionFolders?.[sectionName];
+    if (!sectionFolderId) {
+      logger.warn("Section folder not found", { sectionName });
+      return null;
+    }
+    
+    const timestamp = Date.now();
+    const ext = this.getFileExtension(photoFile.originalname || ".jpg");
+    const fileName = `foto_${timestamp}${ext}`;
+    
+    const result = await this.uploadFile({
+      localPath: photoFile.path,
+      fileName,
+      mimeType: photoFile.mimetype || "image/jpeg",
+      appProperties: {},
+      folderId: sectionFolderId,
+    });
+    
+    return result.webViewLink;
   }
 
   async downloadUrlToFile(url, token, outputPath, maxRedirects = 5) {

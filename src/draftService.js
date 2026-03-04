@@ -30,7 +30,7 @@ class DraftService {
       tipoEquipo: d.tipoEquipo ?? null,
       tipoInspeccion: d.tipoInspeccion ?? null,
       status: d.status ?? "DRAFT",
-      links: d.links || { informes: "#", formatos: "#", certificados: "#" },
+      links: d.links || { informes: "#", formatos: "#", certificados: "#", anexos: "#", driveFolder: "#" },
       source: d.source || "offline_app",
       createdAt: d.createdAt ? new Date(d.createdAt).toISOString() : null,
       updatedAt: d.updatedAt ? new Date(d.updatedAt).toISOString() : null,
@@ -64,8 +64,20 @@ class DraftService {
   async createDraft(data, files = {}) {
     try {
       const db = await connect();
+      const localId = data.localId ? sanitizeString(data.localId) : null;
 
-      
+      // IDEMPOTENCY CHECK FIRST: Prevent duplicate uploads on retries
+      // Must happen BEFORE any side effects (file uploads)
+      if (localId) {
+        const existing = await db
+          .collection(this.collectionName)
+          .findOne({ localId });
+        if (existing) {
+          logger.info("Draft already exists, returning existing", { localId });
+          return this.normalizeDraft(existing);
+        }
+      }
+
       const doc = {
         numCert:
           data.numCert !== undefined && data.numCert !== ""
@@ -93,47 +105,16 @@ class DraftService {
           informes: "#",
           formatos: "#",
           certificados: "#",
+          anexos: "#",
+          driveFolder: "#",
         },
         source: data.source || "offline_app",
         createdAt: new Date(),
         updatedAt: new Date(),
-        localId: data.localId ? sanitizeString(data.localId) : null,
+        localId,
       };
 
-      
-      const hasFiles = files && Object.keys(files).length > 0;
-      if (hasFiles) {
-        const meta = {
-          Usuario: (doc.assignedUsers || []).join(","),
-          NumCert: String(doc.numCert || "DRAFT"),
-          Serial: String(doc.serial || "DRAFT"),
-        };
-
-        const newLinks = await driveService.uploadCertificateFiles(
-          files,
-          meta,
-          doc.empresa || "DRAFT",
-          doc.numCert || "DRAFT",
-          doc.serial || "DRAFT",
-        );
-
-        const cleanedLinks = Object.fromEntries(
-          Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
-        );
-
-        doc.links = { ...(doc.links || {}), ...cleanedLinks };
-      }
-
-      if (doc.localId) {
-        const existing = await db
-          .collection(this.collectionName)
-          .findOne({ localId: doc.localId });
-        if (existing) {
-          return this.normalizeDraft(existing);
-        }
-      }
-
-
+      // Validate enums before any uploads
       if (doc.tipoEquipo && !this.isValidEnum(doc.tipoEquipo, ["TE", "CT"])) {
         throw createError("tipoEquipo inválido. Usa TE o CT.", 400);
       }
@@ -142,6 +123,39 @@ class DraftService {
         !this.isValidEnum(doc.tipoInspeccion, ["PARCIAL", "TOTAL"])
       ) {
         throw createError("tipoInspeccion inválido. Usa PARCIAL o TOTAL.", 400);
+      }
+
+      // Now safe to upload files (after idempotency and validation checks)
+      const hasFiles = files && Object.keys(files).length > 0;
+      if (hasFiles) {
+        const meta = {
+          Usuario: (doc.assignedUsers || []).join(","),
+          NumCert: String(doc.numCert || "DRAFT"),
+          Serial: String(doc.serial || "DRAFT"),
+        };
+
+        const uploadResult = await driveService.uploadCertificateFiles(
+          files,
+          meta,
+          doc.empresa || "DRAFT",
+          doc.numCert || "DRAFT",
+          doc.serial || "DRAFT",
+        );
+
+        // Extraer storage para persistencia
+        const storage = uploadResult?._storage || null;
+        delete uploadResult?._storage;
+
+        const cleanedLinks = Object.fromEntries(
+          Object.entries(uploadResult || {}).filter(([, v]) => v && v !== "#")
+        );
+
+        doc.links = { ...(doc.links || {}), ...cleanedLinks };
+        
+        // Guardar storage si se creó
+        if (storage) {
+          doc.storage = storage;
+        }
       }
 
       const result = await db.collection(this.collectionName).insertOne(doc);
@@ -233,20 +247,36 @@ class DraftService {
           Serial: String(effective.serial || "DRAFT"),
         };
 
-        const newLinks = await driveService.uploadCertificateFiles(
+        // Obtener o crear storage
+        let storage = existing.storage;
+        if (!storage?.rootFolderId && effective.numCert && effective.numCert !== "DRAFT") {
+          storage = await driveService.ensureCertificateFolderTree(effective.numCert);
+        }
+
+        const uploadResult = await driveService.uploadCertificateFiles(
           files,
           meta,
           effective.empresa || "DRAFT",
           effective.numCert || "DRAFT",
           effective.serial || "DRAFT",
+          storage,
         );
 
+        // Extraer storage
+        const newStorage = uploadResult?._storage;
+        delete uploadResult?._storage;
+
         const cleanedLinks = Object.fromEntries(
-          Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
+          Object.entries(uploadResult || {}).filter(([, v]) => v && v !== "#")
         );
 
         if (Object.keys(cleanedLinks).length > 0) {
           updates.links = { ...(existing.links || {}), ...cleanedLinks };
+        }
+
+        // Guardar storage si se creó
+        if (newStorage && !existing.storage?.rootFolderId) {
+          updates.storage = newStorage;
         }
       }
 
@@ -352,6 +382,8 @@ class DraftService {
           informes: "#",
           formatos: "#",
           certificados: "#",
+          anexos: "#",
+          driveFolder: "#",
         },
         createdAt: new Date(),
       };

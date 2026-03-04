@@ -101,6 +101,46 @@ class CertificateService {
     }
   }
 
+  /**
+   * Get certificates filtered by user role.
+   * ADMIN: returns all certificates.
+   * USER: returns only certificates matching user's empresa AND where user is assigned.
+   */
+  async getCertificatesForUser({ role, username, empresa }) {
+    try {
+      performanceMonitor.trackDbQuery();
+      const normalizedRole = String(role || "").toUpperCase();
+
+      // ADMIN sees all certificates
+      if (normalizedRole === "ADMIN") {
+        return this.getAllCertificates();
+      }
+
+      // USER sees only their authorized certificates (empresa + assignedUsers)
+      const cacheKey = `certs_user_${username}_${empresa}`;
+      return await cacheService.getOrSet(
+        cacheKey,
+        async () => {
+          const db = await connect();
+          const certs = await db
+            .collection("certificates")
+            .find({
+              empresa: empresa,
+              assignedUsers: username
+            })
+            .sort({ numCert: 1 })
+            .toArray();
+
+          return certs.map(certificate => this.normalizeCertificate(certificate));
+        },
+        5 * 60 * 1000
+      );
+    } catch (error) {
+      logger.error("Failed to get certificates for user", { username, empresa, error });
+      throw createError("Error obteniendo certificados", 500);
+    }
+  }
+
   
   async createCertificate(certificateData, files) {
     try {
@@ -110,7 +150,7 @@ class CertificateService {
         fechaCargue,
         empresa,
         assignedUsers,
-        resultado = "CUMBLE",
+        resultado = "CUMPLE",
         tipoEquipo,
         tipoInspeccion,
       } = certificateData;
@@ -135,22 +175,27 @@ class CertificateService {
         Serial: String(validatedData.serial),
       };
 
-      
-      const [uploadedLinks] = await Promise.all([
-        driveService.uploadCertificateFiles(
-          files,
-          meta,
-          validatedData.empresa,
-          validatedData.numCert,
-          validatedData.serial
-        )
-      ]);
+      // Usar nuevo flujo con árbol de carpetas
+      const uploadResult = await driveService.uploadCertificateFiles(
+        files,
+        meta,
+        validatedData.empresa,
+        validatedData.numCert,
+        validatedData.serial
+      );
+
+      // Extraer storage para persistencia
+      const storage = uploadResult?._storage || null;
+      delete uploadResult?._storage;
 
       const links = {
         informes: "#",
-        formatos: "#",
         certificados: "#",
-        ...(uploadedLinks || {}),
+        anexos: "#",
+        driveFolder: "#",
+        // Mantener formatos para compatibilidad legacy
+        formatos: "#",
+        ...(uploadResult || {}),
       };
 
       const db = await connect();
@@ -167,6 +212,8 @@ class CertificateService {
         status: "ACTIVO",
         renewedAt: null,
         links,
+        // Guardar storage de Drive para futuras operaciones
+        storage: storage || null,
         createdAt: new Date()
       };
 
@@ -180,11 +227,13 @@ class CertificateService {
       logger.info("Certificate created", {
         id: result.insertedId,
         numCert: validatedData.numCert,
-        empresa: validatedData.empresa
+        empresa: validatedData.empresa,
+        hasStorage: !!storage
       });
 
-      
+      // Clear all certificate caches (global and user-scoped)
       cacheService.clear("all_certificates");
+      cacheService.clearPrefix("certs_user_");
 
       return {
         id: result.insertedId.toString(),
@@ -229,12 +278,21 @@ class CertificateService {
           updateData
         );
 
+        // Extraer storage si viene incluido
+        const newStorage = newLinks?._storage;
+        delete newLinks?._storage;
+
         const cleanedLinks = Object.fromEntries(
           Object.entries(newLinks || {}).filter(([, v]) => v && v !== "#")
         );
 
         if (Object.keys(cleanedLinks).length > 0) {
           updates.links = { ...existing.links, ...cleanedLinks };
+        }
+
+        // Actualizar storage si se creó
+        if (newStorage && !existing.storage?.rootFolderId) {
+          updates.storage = newStorage;
         }
       }
 
@@ -251,7 +309,9 @@ class CertificateService {
       const updated = await db.collection("certificates").findOne({ _id });
       const normalizedCertificate = this.normalizeCertificate(updated);
 
+      // Clear all certificate caches (global and user-scoped)
       cacheService.clear("all_certificates");
+      cacheService.clearPrefix("certs_user_");
 
       logger.info("Certificate updated", { id, numCert: normalizedCertificate.numCert });
 
@@ -264,6 +324,10 @@ class CertificateService {
     }
   }
 
+  /**
+   * Delete certificates by MongoDB _id (preferred) or legacy tuple match.
+   * @param {Array} items - Array of { id } or { empresa, numCert, serial }
+   */
   async deleteCertificates(items) {
     try {
       if (!Array.isArray(items) || items.length === 0) {
@@ -271,17 +335,49 @@ class CertificateService {
       }
 
       const db = await connect();
-      const result = await db.collection("certificates").deleteMany({
-        $or: items.map(c => ({
-          empresa: sanitizeString(c.empresa),
-          numCert: Number(c.numCert),
-          serial: sanitizeString(c.serial),
-        })),
-      });
+      const validHex = /^[a-fA-F0-9]{24}$/;
 
+      // Separate ID-based and tuple-based items
+      const idItems = items.filter(c => c.id && validHex.test(c.id));
+      const tupleItems = items.filter(c => !c.id && c.empresa && c.numCert && c.serial);
+
+      const conditions = [];
+
+      // Preferred: delete by immutable _id
+      if (idItems.length > 0) {
+        const objectIds = idItems.map(c => new ObjectId(c.id));
+        conditions.push({ _id: { $in: objectIds } });
+      }
+
+      // Legacy fallback: delete by tuple (empresa, numCert, serial)
+      // WARNING: This can match multiple records if duplicates exist
+      if (tupleItems.length > 0) {
+        logger.warn("Using legacy tuple-based delete", { count: tupleItems.length });
+        conditions.push({
+          $or: tupleItems.map(c => ({
+            empresa: sanitizeString(c.empresa),
+            numCert: Number(c.numCert),
+            serial: sanitizeString(c.serial),
+          })),
+        });
+      }
+
+      if (conditions.length === 0) {
+        throw createError("No se proporcionaron items válidos para eliminar", 400);
+      }
+
+      const query = conditions.length === 1 ? conditions[0] : { $or: conditions };
+      const result = await db.collection("certificates").deleteMany(query);
+
+      // Clear all certificate caches (global and user-scoped)
       cacheService.clear("all_certificates");
+      cacheService.clearPrefix("certs_user_");
 
-      logger.info("Certificates deleted", { count: result.deletedCount });
+      logger.info("Certificates deleted", { 
+        count: result.deletedCount,
+        byId: idItems.length,
+        byTuple: tupleItems.length
+      });
       return { ok: true, deleted: result.deletedCount };
     } catch (error) {
       if (error.statusCode) throw error;
@@ -377,14 +473,59 @@ class CertificateService {
     const effectiveEmpresa = sanitizeString(updates.empresa || existing.empresa);
     const effectiveNumCert = updates.numCert || existing.numCert;
     const effectiveSerial = updates.serial || existing.serial;
+    
+    // Obtener o crear storage
+    let storage = existing.storage;
+    if (!storage?.rootFolderId) {
+      storage = await driveService.ensureCertificateFolderTree(effectiveNumCert);
+    }
 
-    return driveService.uploadCertificateFiles(
-      files,
-      meta,
-      effectiveEmpresa,
-      effectiveNumCert,
-      effectiveSerial
-    );
+    const results = {};
+    const { pickFirst } = await import("./utils.js");
+
+    // Configuración de archivos con manejo de reemplazo
+    const fileConfigs = [
+      { fileKey: "informes", prefix: "INF", linkKey: "informes" },
+      { fileKey: "certificados", prefix: "CERT", linkKey: "certificados" },
+      { fileKey: "anexos", prefix: "ANEXOS", linkKey: "anexos" },
+      // Mantener formatos para legacy
+      { fileKey: "formatos", prefix: "FOR", linkKey: "formatos" },
+    ];
+
+    for (const { fileKey, prefix, linkKey } of fileConfigs) {
+      const file = pickFirst(files[fileKey]);
+      if (!file) continue;
+
+      // Si existe un archivo previo, moverlo a obsoletos
+      const existingLink = existing.links?.[linkKey];
+      
+      try {
+        const newLink = await driveService.replaceFile(
+          existingLink,
+          file,
+          prefix,
+          effectiveEmpresa,
+          effectiveNumCert,
+          effectiveSerial,
+          storage
+        );
+        results[linkKey] = newLink;
+      } catch (error) {
+        logger.error(`Failed to replace ${prefix} file`, error);
+        throw error;
+      }
+    }
+
+    // Agregar driveFolder si no existe
+    if (!existing.links?.driveFolder || existing.links.driveFolder === "#") {
+      results.driveFolder = storage.rootFolderLink || 
+        `https://drive.google.com/drive/folders/${storage.rootFolderId}`;
+    }
+
+    // Retornar también storage actualizado
+    results._storage = storage;
+
+    return results;
   }
 
   
@@ -412,7 +553,7 @@ class CertificateService {
       daysLeft: exp?.daysLeft ?? null,
       isExpiringSoon: !!exp?.isExpiringSoon,
 
-      links: certificate.links || { informes: "#", formatos: "#", certificados: "#" },
+      links: certificate.links || { informes: "#", formatos: "#", certificados: "#", anexos: "#", driveFolder: "#" },
     };
   }
 

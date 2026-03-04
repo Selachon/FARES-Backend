@@ -25,6 +25,8 @@ export async function connect() {
     db = client.db(config.mongodb.dbName);
     logger.info("Database connected", { database: config.mongodb.dbName });
     
+    // Ensure required indexes exist
+    await ensureIndexes(db);
     // Ejecutar seed de datos iniciales si está configurado
     await seed(db);
     return db;
@@ -32,6 +34,31 @@ export async function connect() {
     // Registrar error de conexión y lanzar excepción en español
     logger.error("Database connection failed", error);
     throw new Error("No se pudo conectar a la base de datos");
+  }
+}
+
+/**
+ * Ensure required database indexes exist.
+ * Creates indexes for performance and data integrity constraints.
+ */
+async function ensureIndexes(db) {
+  try {
+    // Drafts: unique index on localId for idempotent creates (prevents duplicates on retries)
+    await db.collection("drafts").createIndex(
+      { localId: 1 },
+      { unique: true, sparse: true, name: "idx_localId_unique" }
+    );
+
+    // Certificates: index for user-scoped queries
+    await db.collection("certificates").createIndex(
+      { empresa: 1, assignedUsers: 1 },
+      { name: "idx_empresa_assignedUsers" }
+    );
+
+    logger.info("Database indexes ensured");
+  } catch (error) {
+    // Log but don't fail startup - indexes may already exist
+    logger.warn("Index creation warning (may already exist)", { message: error.message });
   }
 }
 
@@ -78,7 +105,7 @@ async function seed(db) {
         {
           username: "cliente1",
           password: clienteHash,
-          role: "CLIENTE",
+          role: "USER",
           empresa: "EMPRESA_DEMO",
           createdAt: new Date(),
         },

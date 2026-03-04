@@ -1,5 +1,4 @@
-// Archivo de rutas de la API REST
-// Define todos los endpoints del sistema: auth, certificados, borradores, administración, etc.
+// Main REST API router for auth, certificates, drafts, admin, and app endpoints.
 import express from "express";
 import multer from "multer";
 import rateLimit from "express-rate-limit";
@@ -31,13 +30,13 @@ import crypto from "crypto";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Crear router principal de Express
+// Main Express router instance.
 const router = express.Router();
 
-// Rate limiter para login (5 intentos por 15 minutos)
+// Login brute-force protection: 5 attempts per 15 minutes.
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 5, // 5 intentos
+  windowMs: 15 * 60 * 1000, // 15 minutes.
+  max: 5, // Max attempts per window.
   message: {
     message: "Demasiados intentos de inicio de sesión. Intenta nuevamente en 15 minutos.",
     code: "TOO_MANY_REQUESTS"
@@ -46,7 +45,7 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Rate limiter para el formulario de contacto (3 por hora)
+// Contact form throttling: 3 requests per hour.
 const contactLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 3,
@@ -98,7 +97,7 @@ const appDevicesCollection = async () => {
   return col;
 };
 
-// Configurar middleware de carga de archivos con multer + validación MIME
+// Shared upload middleware with MIME validation.
 const upload = multer({
   dest: config.upload.dest,
   limits: { fileSize: config.upload.maxFileSize },
@@ -111,19 +110,17 @@ const upload = multer({
   },
 });
 
-// ============================================================
-// SSE - Notificaciones en tiempo real para usuarios USER
-// ============================================================
+// SSE stream for real-time notifications to USER accounts.
 router.get(
   "/notifications/stream",
   authenticate,
   (req, res) => {
-    // Solo usuarios con rol USER reciben notificaciones
+    // Restrict stream to end-user accounts.
     if (req.user.role !== "USER") {
       return res.status(403).json({ message: "Solo para clientes", code: "FORBIDDEN" });
     }
 
-    // Configurar SSE
+    // Configure SSE response headers.
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -131,16 +128,16 @@ router.get(
       "X-Accel-Buffering": "no",
     });
 
-    // Heartbeat cada 30s para mantener la conexión viva
+    // Keep connection alive through periodic heartbeats.
     const heartbeat = setInterval(() => {
       try { res.write(": heartbeat\n\n"); } catch { /* ignore */ }
     }, 30_000);
 
-    // Registrar cliente
+    // Register client connection.
     const { username } = req.user;
     notificationService.addClient(username, res);
 
-    // Limpieza al cerrar conexión
+    // Remove client on disconnect.
     req.on("close", () => {
       clearInterval(heartbeat);
       notificationService.removeClient(username, res);
@@ -214,7 +211,7 @@ router.post(
 
 router.get(
   "/auth/users",
-  authenticate,
+  adminGuard,
   asyncHandler(async (req, res) => {
     const users = await userService.getAllUsers();
     res.json(users);
@@ -226,13 +223,13 @@ router.post(
   loginLimiter,
   asyncHandler(async (req, res) => {
     const { username, password } = req.body;
-    // Rechazar si username o password no son strings (previene NoSQL injection)
+    // Hard type-check credentials to reduce NoSQL injection vectors.
     if (typeof username !== "string" || typeof password !== "string") {
       return res.status(400).json({ message: "Credenciales inválidas", code: "BAD_REQUEST" });
     }
     const user = await userService.authenticateUser(username, password);
     
-    // Crear token JWT
+    // Issue session JWT.
     const token = jwt.sign(
       {
         username: user.username,
@@ -243,7 +240,7 @@ router.post(
       { expiresIn: config.jwt.expiresIn }
     );
     
-    // Establecer cookie httpOnly
+    // Store token in HTTP-only cookie.
     res.cookie(config.jwt.cookie.name, token, {
       httpOnly: config.jwt.cookie.httpOnly,
       secure: config.jwt.cookie.secure,
@@ -251,7 +248,7 @@ router.post(
       maxAge: config.jwt.cookie.maxAge
     });
     
-    // Retornar datos del usuario (sin token en body)
+    // Return user profile without exposing token in JSON body.
     res.json(user);
   }),
 );
@@ -259,7 +256,7 @@ router.post(
 router.post(
   "/auth/logout",
   asyncHandler(async (req, res) => {
-    // Limpiar cookie de sesión
+    // Clear session cookie.
     res.clearCookie(config.jwt.cookie.name);
     res.json({ message: "Sesión cerrada exitosamente" });
   }),
@@ -269,7 +266,13 @@ router.get(
   "/certificates",
   authenticate,
   asyncHandler(async (req, res) => {
-    const certificates = await certificateService.getAllCertificates();
+    // Server-side authorization: filter certificates by user role/empresa/assignment
+    const { role, username, empresa } = req.user;
+    const certificates = await certificateService.getCertificatesForUser({
+      role,
+      username,
+      empresa
+    });
     res.json(certificates);
   }),
 );
@@ -453,15 +456,16 @@ router.post(
   adminGuard,
   upload.fields([
     { name: "informes", maxCount: 1 },
-    { name: "formatos", maxCount: 1 },
+    { name: "formatos", maxCount: 1 }, // Legacy field kept for older records.
     { name: "certificados", maxCount: 1 },
+    { name: "anexos", maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
     const certificate = await certificateService.createCertificate(
       req.body,
       req.files,
     );
-    // Notificar a los usuarios asignados via SSE
+    // Notify assigned users via SSE.
     notificationService.notifyCertificateCreated(certificate);
     res.status(201).json(certificate);
   }),
@@ -472,8 +476,9 @@ router.put(
   adminGuard,
   upload.fields([
     { name: "informes", maxCount: 1 },
-    { name: "formatos", maxCount: 1 },
+    { name: "formatos", maxCount: 1 }, // Legacy field kept for older records.
     { name: "certificados", maxCount: 1 },
+    { name: "anexos", maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -511,8 +516,9 @@ router.post(
   adminGuard,
   upload.fields([
     { name: "informes", maxCount: 1 },
-    { name: "formatos", maxCount: 1 },
+    { name: "formatos", maxCount: 1 }, // Legacy field kept for older records.
     { name: "certificados", maxCount: 1 },
+    { name: "anexos", maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
     const draft = await draftService.createDraft(req.body, req.files || {});
@@ -525,8 +531,9 @@ router.put(
   adminGuard,
   upload.fields([
     { name: "informes", maxCount: 1 },
-    { name: "formatos", maxCount: 1 },
+    { name: "formatos", maxCount: 1 }, // Legacy field kept for older records.
     { name: "certificados", maxCount: 1 },
+    { name: "anexos", maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -551,19 +558,131 @@ router.post(
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const created = await draftService.publishDraft(id);
-    // Notificar a los usuarios asignados via SSE
+    // Notify assigned users via SSE.
     notificationService.notifyCertificateCreated(created);
     res.status(201).json(created);
   }),
 );
 
-// ============================================================
-// MOBILE APP ENDPOINTS
-// Endpoints específicos para la aplicación móvil offline
-// Usa appGuard en lugar de adminGuard para autenticación simple
-// ============================================================
+// Mobile app endpoints used by the offline-first sync client.
+// These routes use appGuard instead of role-based admin/user guards.
 
 router.use("/app", appRoutesLimiter);
+
+// Collection for tracking enrollment token usage
+const enrollmentTokensCollection = async () => {
+  const db = await connect();
+  const col = db.collection("enrollment_tokens");
+  await col.createIndex({ tokenId: 1 }, { unique: true });
+  await col.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+  return col;
+};
+
+/**
+ * Admin endpoint to generate enrollment tokens for device provisioning.
+ * Each token can be used to register up to maxDevices devices.
+ */
+router.post(
+  "/app/auth/enrollment-token",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const maxDevices = Math.min(
+      parseInt(req.body?.maxDevices) || config.security.maxDevicesPerEnrollment,
+      50 // Hard cap
+    );
+    const expiresIn = req.body?.expiresIn || config.security.enrollmentTokenExpiresIn;
+    const label = String(req.body?.label || "").trim().slice(0, 100) || null;
+
+    const tokenId = crypto.randomBytes(16).toString("hex");
+    const token = jwt.sign(
+      { tokenId, maxDevices, type: "enrollment" },
+      config.security.enrollmentSecret,
+      { expiresIn, issuer: "fares-backend" }
+    );
+
+    const decoded = jwt.decode(token);
+    const expiresAt = decoded?.exp ? new Date(decoded.exp * 1000) : null;
+
+    const tokens = await enrollmentTokensCollection();
+    await tokens.insertOne({
+      tokenId,
+      label,
+      maxDevices,
+      usedDevices: 0,
+      deviceIds: [],
+      createdBy: req.user.username,
+      createdAt: new Date(),
+      expiresAt,
+    });
+
+    logger.info("Enrollment token created", {
+      tokenId,
+      maxDevices,
+      createdBy: req.user.username,
+      label,
+    });
+
+    res.status(201).json({
+      token,
+      tokenId,
+      maxDevices,
+      expiresAt: expiresAt?.toISOString() || null,
+    });
+  }),
+);
+
+/**
+ * Admin endpoint to list and monitor enrollment tokens.
+ */
+router.get(
+  "/app/auth/enrollment-tokens",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const tokens = await enrollmentTokensCollection();
+    const list = await tokens
+      .find({})
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .toArray();
+
+    res.json(list.map(t => ({
+      tokenId: t.tokenId,
+      label: t.label,
+      maxDevices: t.maxDevices,
+      usedDevices: t.usedDevices,
+      createdBy: t.createdBy,
+      createdAt: t.createdAt,
+      expiresAt: t.expiresAt,
+    })));
+  }),
+);
+
+/**
+ * Admin endpoint to revoke an enrollment token.
+ */
+router.delete(
+  "/app/auth/enrollment-token/:tokenId",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { tokenId } = req.params;
+    const tokens = await enrollmentTokensCollection();
+    const result = await tokens.deleteOne({ tokenId });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        message: "Token no encontrado",
+        code: "NOT_FOUND",
+      });
+    }
+
+    logger.info("Enrollment token revoked", {
+      tokenId,
+      revokedBy: req.user.username,
+    });
+
+    res.json({ ok: true });
+  }),
+);
 
 router.post(
   "/app/auth/device-register",
@@ -572,6 +691,7 @@ router.post(
     const deviceIdRaw = String(req.body?.deviceId || "").trim();
     const platformRaw = String(req.body?.platform || "unknown").trim().toLowerCase();
     const appVersionRaw = String(req.body?.appVersion || "").trim();
+    const enrollmentToken = String(req.body?.enrollmentToken || "").trim();
 
     const deviceId = deviceIdRaw.slice(0, 128);
     const appVersion = appVersionRaw.slice(0, 32);
@@ -588,14 +708,32 @@ router.post(
     const devices = await appDevicesCollection();
     const existing = await devices.findOne({ deviceId });
 
-    if (existing?.status === "revoked") {
-      return res.status(403).json({
-        message: "Dispositivo revocado",
-        code: "DEVICE_REVOKED",
-      });
-    }
-
+    // Handle existing device re-registration
     if (existing) {
+      if (existing.status === "revoked") {
+        return res.status(403).json({
+          message: "Dispositivo revocado",
+          code: "DEVICE_REVOKED",
+        });
+      }
+
+      // Re-registration requires proof of ownership via current secret
+      const currentSecret = String(req.body?.currentSecret || "").trim();
+      if (!currentSecret) {
+        return res.status(401).json({
+          message: "Se requiere el secreto actual para re-registrar el dispositivo",
+          code: "CURRENT_SECRET_REQUIRED",
+        });
+      }
+
+      if (!safeEqualSecret(currentSecret, existing.secretHash)) {
+        logger.warn("Device re-registration failed: invalid current secret", { deviceId });
+        return res.status(401).json({
+          message: "Secreto actual inválido",
+          code: "INVALID_CURRENT_SECRET",
+        });
+      }
+
       const rotatedSecret = crypto.randomBytes(32).toString("hex");
       await devices.updateOne(
         { deviceId },
@@ -616,6 +754,109 @@ router.post(
       });
     }
 
+    // New device registration requires enrollment token (unless disabled)
+    if (config.security.requireEnrollmentToken) {
+      if (!enrollmentToken) {
+        return res.status(401).json({
+          message: "Token de provisión requerido para nuevos dispositivos",
+          code: "ENROLLMENT_TOKEN_REQUIRED",
+        });
+      }
+
+      // Validate enrollment token
+      let tokenPayload;
+      try {
+        tokenPayload = jwt.verify(enrollmentToken, config.security.enrollmentSecret, {
+          issuer: "fares-backend",
+        });
+        if (tokenPayload.type !== "enrollment") {
+          throw new Error("Invalid token type");
+        }
+      } catch (err) {
+        logger.warn("Invalid enrollment token", { error: err.message, deviceId });
+        return res.status(401).json({
+          message: "Token de provisión inválido o expirado",
+          code: "INVALID_ENROLLMENT_TOKEN",
+        });
+      }
+
+      // Atomically check and increment token usage to prevent race conditions
+      const tokens = await enrollmentTokensCollection();
+      const updateResult = await tokens.findOneAndUpdate(
+        {
+          tokenId: tokenPayload.tokenId,
+          $expr: { $lt: ["$usedDevices", "$maxDevices"] },
+        },
+        {
+          $inc: { usedDevices: 1 },
+          $push: { deviceIds: deviceId },
+        },
+        { returnDocument: "before" },
+      );
+
+      if (!updateResult) {
+        // Check if token exists but exhausted, or doesn't exist
+        const existingToken = await tokens.findOne({ tokenId: tokenPayload.tokenId });
+        if (!existingToken) {
+          return res.status(401).json({
+            message: "Token de provisión no encontrado o revocado",
+            code: "ENROLLMENT_TOKEN_REVOKED",
+          });
+        }
+        logger.warn("Enrollment token exhausted", {
+          tokenId: tokenPayload.tokenId,
+          usedDevices: existingToken.usedDevices,
+          maxDevices: existingToken.maxDevices,
+        });
+        return res.status(403).json({
+          message: "Token de provisión ha alcanzado el límite de dispositivos",
+          code: "ENROLLMENT_TOKEN_EXHAUSTED",
+        });
+      }
+
+      logger.info("Device enrolled with token", {
+        deviceId,
+        tokenId: tokenPayload.tokenId,
+        platform,
+      });
+
+      // Insert device with rollback on failure to prevent token exhaustion attacks
+      const deviceSecret = crypto.randomBytes(32).toString("hex");
+      try {
+        await devices.insertOne({
+          deviceId,
+          secretHash: hashSecret(deviceSecret),
+          status: "active",
+          platform,
+          appVersion,
+          createdAt: new Date(),
+          lastSeenAt: new Date(),
+        });
+      } catch (insertError) {
+        // Rollback token usage on device insert failure
+        await tokens.updateOne(
+          { tokenId: tokenPayload.tokenId },
+          {
+            $inc: { usedDevices: -1 },
+            $pull: { deviceIds: deviceId },
+          },
+        );
+        logger.error("Device insert failed, rolled back token usage", {
+          deviceId,
+          tokenId: tokenPayload.tokenId,
+          error: insertError.message,
+        });
+        throw insertError;
+      }
+
+      return res.status(201).json({
+        ok: true,
+        alreadyRegistered: false,
+        deviceSecret,
+      });
+    }
+
+    // New device without enrollment token requirement (legacy flow or disabled)
     const deviceSecret = crypto.randomBytes(32).toString("hex");
     await devices.insertOne({
       deviceId,
@@ -727,7 +968,7 @@ router.post(
   upload.any(),
   asyncHandler(async (req, res) => {
     const startedAt = Date.now();
-    // Receive full inspection data from mobile app
+    // Mobile app sends the full inspection payload.
     const { inspeccionCompleta, ...draftData } = req.body;
 
     if (!inspeccionCompleta) {
@@ -737,7 +978,7 @@ router.post(
       });
     }
 
-    // Validar campos básicos de draftData
+    // Validate required draft identity fields.
     if (!draftData.serial || !draftData.empresa) {
       return res.status(400).json({
         message: "serial y empresa son requeridos",
@@ -755,7 +996,7 @@ router.post(
       photosUploaded: photoFiles.length,
     });
 
-    // Parse if it comes as string
+    // Multipart requests may send JSON as a string.
     let inspectionData;
     try {
       inspectionData = typeof inspeccionCompleta === 'string' 
@@ -801,16 +1042,16 @@ router.post(
       logger.warn('Inventory site creation failed', { error: error.message });
     }
 
-    // Flag to enable/disable automatic PDF generation
-    // Set to true when process is 100% automated (signatures, measurements done in app)
+    // Feature flag for automatic PDF generation from the workbook.
+    // Keep disabled until the mobile payload fully covers validated inputs.
     const ENABLE_AUTO_PDF = false;
 
-    // 1. Fill Excel template
+    // 1) Fill Excel template.
     logger.info("Step 1: Filling Excel template", { serial: draftData.serial });
     const workbook = await excelService.fillTemplate(inspectionData);
     logger.info("Step 1 complete: Excel template filled");
 
-    // 2. Prepare temp files
+    // 2) Prepare temporary files.
     const tempDir = path.join(__dirname, '..', 'uploads');
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
@@ -830,11 +1071,11 @@ router.post(
       await excelService.saveWorkbook(workbook, excelPath);
       logger.info("Step 2 complete: Excel saved", { excelPath });
 
-      // PDF generation logic (disabled for now, kept for future automation)
+      // Optional PDF path, intentionally disabled for current operations.
       if (ENABLE_AUTO_PDF) {
         logger.info("Step 3: Cloning workbook for PDF");
         const pdfWorkbook = await excelService.cloneWorkbook(workbook);
-        // Exclude photos from categories that shouldn't appear in PDF
+        // Exclude categories that should not appear in the PDF report.
         excelService.insertPhotoRecords(pdfWorkbook, inspectionData.fotos || [], {
           excludeCategories: ['revision_interna', 'prueba_hidrostatica', 'medicion_espesores', 'proteccion_catodica'],
         });
@@ -850,7 +1091,7 @@ router.post(
         logger.info("Step 4 complete: PDF generated", { pdfPath });
       }
 
-      // 3. Upload Excel to Drive and get link for formatos
+      // 3) Upload Excel and reuse its URL in `links.formatos`.
       logger.info("Step 3: Uploading Excel to Drive");
       const dbFolders = await driveService.getDriveFolders();
       const informesFolder =
@@ -876,7 +1117,7 @@ router.post(
         link: excelUploadResult?.webViewLink,
       });
 
-      // 4. Create draft with Excel link in formatos (and PDF in informes if enabled)
+      // 4) Create draft with generated document links.
       logger.info("Step 4: Creating draft");
       const files = {};
 
@@ -888,7 +1129,7 @@ router.post(
         }];
       }
 
-      // Add Excel link to draft data
+      // Persist uploaded Excel URL as legacy `formatos` link.
       draftData.links = {
         ...(draftData.links || {}),
         formatos: excelUploadResult?.webViewLink || '#',
@@ -903,24 +1144,24 @@ router.post(
 
       res.status(201).json(draft);
     } finally {
-      // Cleanup temp files
+      // Always clean up temporary files.
       try {
         fs.unlinkSync(excelPath);
       } catch (_err) {
-        // Ignore cleanup errors
+        // Best-effort cleanup.
       }
 
       if (ENABLE_AUTO_PDF) {
         try {
           fs.unlinkSync(pdfSourceExcelPath);
         } catch (_err) {
-          // Ignore cleanup errors
+          // Best-effort cleanup.
         }
 
         try {
           fs.unlinkSync(pdfPath);
         } catch (_err) {
-          // Ignore cleanup errors
+          // Best-effort cleanup.
         }
       }
 
@@ -928,7 +1169,7 @@ router.post(
         try {
           fs.unlinkSync(photoFile.path);
         } catch (_err) {
-          // Ignore cleanup errors
+          // Best-effort cleanup.
         }
       }
     }
@@ -938,7 +1179,7 @@ router.post(
 router.get(
   "/app/health",
   asyncHandler(async (req, res) => {
-    // Simple health check for mobile app
+    // Lightweight mobile connectivity check.
     res.json({ 
       status: "ok", 
       timestamp: new Date().toISOString(),
