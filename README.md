@@ -66,6 +66,31 @@ npm start
 SEED_DEMO=1 npm start
 ```
 
+## Cargue masivo desde Excel
+
+Para inyectar certificados directamente en MongoDB desde un archivo Excel:
+
+```bash
+# 1) Validar sin escribir en DB (dry-run)
+npm run import:certs:excel -- --excel "/ruta/archivo.xlsx"
+
+# 2) Ejecutar insercion/upsert real
+npm run import:certs:excel -- --excel "/ruta/archivo.xlsx" --apply
+
+# 3) Cargar todos los Excel de una carpeta
+npm run import:certs:excel -- --dir "/ruta/carpeta-con-xlsx" --apply
+```
+
+Opciones utiles:
+
+- `--uri`: URI MongoDB (si no quieres usar `MONGODB_URI` del `.env`)
+- `--db`: base de datos destino (default `fares`)
+- `--sheet`: hoja especifica del Excel (si no, usa la primera)
+- `--collection`: coleccion destino (default `certificates`)
+- `--dir`: procesa todos los `.xlsx` de una carpeta
+
+El script mantiene la estructura de los certificados de la app y evita duplicados usando la llave `(empresa, numCert, serial)`.
+
 ## Endpoints principales
 
 ### Autenticacion
