@@ -803,6 +803,38 @@ class DriveService {
     const ext = filename.substring(filename.lastIndexOf("."));
     return ext || ".pdf";
   }
+
+  /**
+   * Eliminar un archivo de Google Drive
+   * @param {string} fileId - ID del archivo a eliminar
+   * @returns {Promise<boolean>} - true si se eliminó correctamente
+   */
+  async deleteFile(fileId) {
+    if (!fileId) {
+      logger.warn("deleteFile called without fileId");
+      return false;
+    }
+
+    performanceMonitor.trackDriveOperation();
+
+    return retryOperation(async () => {
+      try {
+        await this.drive.files.delete({
+          fileId,
+          supportsAllDrives: true,
+        });
+        logger.info("File deleted from Drive", { fileId });
+        return true;
+      } catch (error) {
+        // Si el archivo no existe (404), considerarlo como éxito
+        if (error.code === 404) {
+          logger.info("File already deleted or not found", { fileId });
+          return true;
+        }
+        throw error;
+      }
+    });
+  }
 }
 
 

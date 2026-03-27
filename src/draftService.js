@@ -7,6 +7,7 @@ import { userService } from "./userService.js";
 import { cacheService } from "./cacheService.js";
 import { ObjectId } from "mongodb";
 import { certificateService } from "./certificateService.js";
+import { normalizeInspeccionCompleta, normalizePhotos } from "./inspectionTypes.js";
 
 class DraftService {
   constructor() {
@@ -18,8 +19,10 @@ class DraftService {
     return allowed.includes(String(value || "").trim());
   }
 
-  normalizeDraft(d) {
-    return {
+  normalizeDraft(d, options = {}) {
+    const { includeFullInspection = false } = options;
+    
+    const base = {
       id: d._id?.toString?.() || d.id,
       numCert: d.numCert ?? null,
       serial: d.serial ?? "",
@@ -35,7 +38,21 @@ class DraftService {
       createdAt: d.createdAt ? new Date(d.createdAt).toISOString() : null,
       updatedAt: d.updatedAt ? new Date(d.updatedAt).toISOString() : null,
       localId: d.localId || null,
+      // Indicar si tiene inspección completa (para UI)
+      hasInspeccionCompleta: !!d.inspeccionCompleta,
+      // Número de fotos (para UI)
+      photosCount: Array.isArray(d.fotos) ? d.fotos.length : 0,
     };
+
+    // Incluir datos completos solo si se solicita (para vista detallada)
+    if (includeFullInspection) {
+      base.inspeccionCompleta = d.inspeccionCompleta 
+        ? normalizeInspeccionCompleta(d.inspeccionCompleta)
+        : null;
+      base.fotos = normalizePhotos(d.fotos);
+    }
+
+    return base;
   }
 
   
@@ -112,6 +129,12 @@ class DraftService {
         createdAt: new Date(),
         updatedAt: new Date(),
         localId,
+        // Nuevo: Inspección completa (datos del formulario de la app)
+        inspeccionCompleta: data.inspeccionCompleta 
+          ? normalizeInspeccionCompleta(data.inspeccionCompleta)
+          : null,
+        // Nuevo: Fotos de la inspección
+        fotos: normalizePhotos(data.fotos),
       };
 
       // Validate enums before any uploads
@@ -207,6 +230,18 @@ class DraftService {
       else updates[field] = sanitizeString(data[field]);
     }
 
+    // Nuevo: Actualizar inspección completa si viene en los datos
+    if (data.inspeccionCompleta !== undefined) {
+      updates.inspeccionCompleta = data.inspeccionCompleta
+        ? normalizeInspeccionCompleta(data.inspeccionCompleta)
+        : existing.inspeccionCompleta;
+    }
+
+    // Nuevo: Actualizar fotos si vienen en los datos
+    if (data.fotos !== undefined) {
+      updates.fotos = normalizePhotos(data.fotos);
+    }
+
     // valida enums si vienen
     if (
       updates.tipoEquipo &&
@@ -291,6 +326,25 @@ class DraftService {
       if (error.statusCode) throw error;
       logger.error("Failed to update draft", error);
       throw createError("Error actualizando borrador", 500);
+    }
+  }
+
+  /**
+   * Obtiene un borrador por ID con todos los detalles (inspección completa y fotos)
+   */
+  async getDraftById(id) {
+    try {
+      const _id = new ObjectId(id);
+      const db = await connect();
+
+      const draft = await db.collection(this.collectionName).findOne({ _id });
+      if (!draft) throw createError("No existe el borrador", 404);
+
+      return this.normalizeDraft(draft, { includeFullInspection: true });
+    } catch (error) {
+      if (error.statusCode) throw error;
+      logger.error("Failed to get draft by id", error);
+      throw createError("Error obteniendo borrador", 500);
     }
   }
 
@@ -386,6 +440,12 @@ class DraftService {
           driveFolder: "#",
         },
         createdAt: new Date(),
+        // Nuevo: Copiar inspección completa del borrador
+        inspeccionCompleta: draft.inspeccionCompleta || null,
+        // Nuevo: Copiar fotos del borrador
+        fotos: Array.isArray(draft.fotos) ? draft.fotos : [],
+        // Copiar storage si existe
+        storage: draft.storage || null,
       };
 
       const computed = certificateService.computeExpiry(document);

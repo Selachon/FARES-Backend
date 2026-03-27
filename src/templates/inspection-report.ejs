@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Informe de Inspección - <%= certificate.numCert || 'Borrador' %></title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      font-size: 10pt;
+      line-height: 1.4;
+      color: #333;
+      background: #fff;
+    }
+
+    .page {
+      padding: 0;
+      page-break-after: always;
+    }
+
+    .page:last-child {
+      page-break-after: avoid;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 2px solid #0B3A84;
+      padding-bottom: 10px;
+      margin-bottom: 15px;
+    }
+
+    .header-logo {
+      width: 100px;
+    }
+
+    .header-logo img {
+      max-width: 100%;
+      height: auto;
+    }
+
+    .header-title {
+      flex: 1;
+      text-align: center;
+      padding: 0 20px;
+    }
+
+    .header-title h1 {
+      font-size: 14pt;
+      color: #0B3A84;
+      text-transform: uppercase;
+      margin-bottom: 3px;
+    }
+
+    .header-title h2 {
+      font-size: 12pt;
+      font-weight: normal;
+      color: #333;
+    }
+
+    .header-meta {
+      text-align: right;
+      font-size: 8pt;
+      color: #666;
+    }
+
+    .header-meta p {
+      margin: 2px 0;
+    }
+
+    /* Sections */
+    .section {
+      margin-bottom: 15px;
+    }
+
+    .section-title {
+      background: #0B3A84;
+      color: #fff;
+      padding: 5px 10px;
+      font-size: 10pt;
+      font-weight: bold;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .section-content {
+      padding: 0 5px;
+    }
+
+    /* Field rows */
+    .field-row {
+      display: flex;
+      margin-bottom: 5px;
+      align-items: flex-start;
+    }
+
+    .field-label {
+      font-weight: bold;
+      min-width: 150px;
+      color: #444;
+    }
+
+    .field-value {
+      flex: 1;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 2px;
+      min-height: 16px;
+    }
+
+    /* Grid layout */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 20px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px 15px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px 10px;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 10px;
+    }
+
+    th, td {
+      border: 1px solid #ccc;
+      padding: 5px 8px;
+      text-align: left;
+      font-size: 9pt;
+    }
+
+    th {
+      background: #f0f0f0;
+      font-weight: bold;
+      color: #333;
+    }
+
+    .eval-c { color: #16a34a; font-weight: bold; }
+    .eval-nc { color: #dc2626; font-weight: bold; }
+    .eval-na { color: #6b7280; }
+
+    /* Result badge */
+    .result-badge {
+      display: inline-block;
+      padding: 8px 20px;
+      font-size: 14pt;
+      font-weight: bold;
+      border-radius: 5px;
+      text-transform: uppercase;
+    }
+
+    .result-cumple {
+      background: #dcfce7;
+      color: #16a34a;
+      border: 2px solid #16a34a;
+    }
+
+    .result-no-cumple {
+      background: #fef2f2;
+      color: #dc2626;
+      border: 2px solid #dc2626;
+    }
+
+    .result-sin-concepto {
+      background: #fefce8;
+      color: #ca8a04;
+      border: 2px solid #ca8a04;
+    }
+
+    /* Textarea content */
+    .text-content {
+      background: #f9f9f9;
+      border: 1px solid #ddd;
+      padding: 8px;
+      min-height: 40px;
+      white-space: pre-wrap;
+      font-size: 9pt;
+    }
+
+    /* Photos */
+    .photos-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .photo-item {
+      text-align: center;
+    }
+
+    .photo-item img {
+      max-width: 100%;
+      max-height: 150px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+
+    .photo-caption {
+      font-size: 8pt;
+      color: #666;
+      margin-top: 3px;
+    }
+
+    /* Signatures */
+    .signatures {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 40px;
+      margin-top: 30px;
+      padding-top: 20px;
+    }
+
+    .signature-block {
+      text-align: center;
+    }
+
+    .signature-line {
+      border-top: 1px solid #333;
+      margin-top: 50px;
+      padding-top: 5px;
+    }
+
+    .signature-name {
+      font-weight: bold;
+      font-size: 10pt;
+    }
+
+    .signature-title {
+      font-size: 9pt;
+      color: #666;
+    }
+
+    /* Footer */
+    .footer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 8pt;
+      color: #999;
+      padding: 10px;
+      border-top: 1px solid #eee;
+    }
+
+    /* Utilities */
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .mb-10 { margin-bottom: 10px; }
+    .mt-20 { margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-logo">
+        <div style="width: 80px; height: 40px; background: #0B3A84; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14pt;">
+          FARES
+        </div>
+      </div>
+      <div class="header-title">
+        <h1>Informe de Inspección</h1>
+        <h2>Recipientes a Presión para GLP</h2>
+      </div>
+      <div class="header-meta">
+        <p><strong>Informe No:</strong> <%= certificate.numCert || '—' %></p>
+        <p><strong>Fecha:</strong> <%= formatDate(inspection.datosInforme?.fechaInspeccion) %></p>
+        <p><strong>Tipo:</strong> <%= inspection.datosInforme?.tipoInspeccion || certificate.tipoInspeccion || '—' %></p>
+      </div>
+    </div>
+
+    <!-- Resultado -->
+    <div class="section text-center mb-10">
+      <% 
+        const resultado = certificate.resultado || inspection.resultado || 'SIN CONCEPTO';
+        const resultClass = resultado === 'CUMPLE' ? 'result-cumple' : 
+                           resultado === 'NO CUMPLE' ? 'result-no-cumple' : 'result-sin-concepto';
+      %>
+      <span class="result-badge <%= resultClass %>"><%= resultado %></span>
+    </div>
+
+    <!-- Datos del Cliente -->
+    <div class="section">
+      <div class="section-title">1. Datos del Cliente</div>
+      <div class="section-content">
+        <div class="grid-2">
+          <div class="field-row">
+            <span class="field-label">Cliente:</span>
+            <span class="field-value"><%= inspection.datosCliente?.cliente || certificate.empresa || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">NIT:</span>
+            <span class="field-value"><%= inspection.datosCliente?.nit || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Dirección:</span>
+            <span class="field-value"><%= inspection.datosCliente?.direccion || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Ciudad:</span>
+            <span class="field-value"><%= inspection.datosCliente?.ciudad || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Teléfono:</span>
+            <span class="field-value"><%= inspection.datosCliente?.telefono || '—' %></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Información del Ítem -->
+    <div class="section">
+      <div class="section-title">2. Información del Ítem Inspeccionado</div>
+      <div class="section-content">
+        <div class="grid-2">
+          <div class="field-row">
+            <span class="field-label">Número de Serie:</span>
+            <span class="field-value"><%= inspection.informacionItem?.numeroSerie || certificate.serial || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Capacidad:</span>
+            <span class="field-value"><%= inspection.informacionItem?.capacidad || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Fabricante:</span>
+            <span class="field-value"><%= inspection.informacionItem?.fabricante || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Año de Fabricación:</span>
+            <span class="field-value"><%= inspection.informacionItem?.anioFabricacion || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Código de Fabricación:</span>
+            <span class="field-value"><%= inspection.informacionItem?.codigoFabricacion || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Tipo de Instalación:</span>
+            <span class="field-value"><%= inspection.informacionItem?.tipoInstalacion || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Clasificación:</span>
+            <span class="field-value"><%= inspection.informacionItem?.clasificacion || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Clase de Uso:</span>
+            <span class="field-value"><%= inspection.informacionItem?.claseUso || '—' %></span>
+          </div>
+        </div>
+        
+        <div class="grid-4 mt-20">
+          <div class="field-row">
+            <span class="field-label">Espesor Cuerpo:</span>
+            <span class="field-value"><%= inspection.informacionItem?.espesorCuerpo ? inspection.informacionItem.espesorCuerpo + ' mm' : '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Espesor Cabeza:</span>
+            <span class="field-value"><%= inspection.informacionItem?.espesorCabeza ? inspection.informacionItem.espesorCabeza + ' mm' : '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Presión Operación:</span>
+            <span class="field-value"><%= inspection.informacionItem?.presionOperacion ? inspection.informacionItem.presionOperacion + ' PSI' : '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Presión Diseño:</span>
+            <span class="field-value"><%= inspection.informacionItem?.presionDisenio ? inspection.informacionItem.presionDisenio + ' PSI' : '—' %></span>
+          </div>
+        </div>
+
+        <div class="grid-2 mt-20">
+          <div class="field-row">
+            <span class="field-label">Ubicación:</span>
+            <span class="field-value"><%= inspection.informacionItem?.nombreUbicacion || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Dirección Inspección:</span>
+            <span class="field-value"><%= inspection.informacionItem?.direccion || '—' %></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ítems a Evaluar -->
+    <div class="section">
+      <div class="section-title">3. Ítems Evaluados</div>
+      <div class="section-content">
+        <table>
+          <thead>
+            <tr>
+              <th style="width: 50%;">Ítem de Evaluación</th>
+              <th style="width: 16%;">Cumple</th>
+              <th style="width: 17%;">No Cumple</th>
+              <th style="width: 17%;">N/A</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% 
+              const items = inspection.itemsEvaluar || {};
+              Object.entries(LABELS_ITEMS_EVALUAR).forEach(([key, label]) => {
+                const value = items[key] || 'NA';
+            %>
+            <tr>
+              <td><%= label %></td>
+              <td class="text-center <%= value === 'C' ? 'eval-c' : '' %>"><%= value === 'C' ? 'X' : '' %></td>
+              <td class="text-center <%= value === 'NC' ? 'eval-nc' : '' %>"><%= value === 'NC' ? 'X' : '' %></td>
+              <td class="text-center <%= value === 'NA' ? 'eval-na' : '' %>"><%= value === 'NA' ? 'X' : '' %></td>
+            </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Segunda página -->
+  <div class="page">
+    <div class="header">
+      <div class="header-logo">
+        <div style="width: 80px; height: 40px; background: #0B3A84; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14pt;">
+          FARES
+        </div>
+      </div>
+      <div class="header-title">
+        <h1>Informe de Inspección</h1>
+        <h2>Continuación - Informe No. <%= certificate.numCert || '—' %></h2>
+      </div>
+      <div class="header-meta">
+        <p>Página 2</p>
+      </div>
+    </div>
+
+    <!-- Equipos Utilizados -->
+    <div class="section">
+      <div class="section-title">4. Equipos Utilizados</div>
+      <div class="section-content">
+        <table>
+          <thead>
+            <tr>
+              <th>Equipo</th>
+              <th>Identificación / Serial</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% 
+              const equipos = inspection.equiposUtilizados || {};
+              Object.entries(LABELS_EQUIPOS).forEach(([key, label]) => {
+                const value = equipos[key];
+                if (value && value !== 'N/A' && value !== '') {
+            %>
+            <tr>
+              <td><%= label %></td>
+              <td><%= value %></td>
+            </tr>
+            <% }}); %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Reporte de Evaluación -->
+    <div class="section">
+      <div class="section-title">5. Reporte de Evaluación</div>
+      <div class="section-content">
+        <% const reporte = inspection.reporteEvaluacion || {}; %>
+        
+        <% if (reporte.inspeccionVisualSuperficie) { %>
+        <div class="mb-10">
+          <strong>Inspección Visual (Superficie):</strong>
+          <div class="text-content"><%= reporte.inspeccionVisualSuperficie %></div>
+        </div>
+        <% } %>
+
+        <% if (reporte.inspeccionVisualSoldaduras) { %>
+        <div class="mb-10">
+          <strong>Inspección Visual (Soldaduras):</strong>
+          <div class="text-content"><%= reporte.inspeccionVisualSoldaduras %></div>
+        </div>
+        <% } %>
+
+        <% if (reporte.inspeccionVisualAccesorios) { %>
+        <div class="mb-10">
+          <strong>Inspección Visual (Accesorios):</strong>
+          <div class="text-content"><%= reporte.inspeccionVisualAccesorios %></div>
+        </div>
+        <% } %>
+
+        <% if (reporte.hermeticidad) { %>
+        <div class="mb-10">
+          <strong>Hermeticidad:</strong>
+          <div class="text-content"><%= reporte.hermeticidad %></div>
+        </div>
+        <% } %>
+
+        <% if (reporte.tuberiasConexiones) { %>
+        <div class="mb-10">
+          <strong>Tuberías y Conexiones:</strong>
+          <div class="text-content"><%= reporte.tuberiasConexiones %></div>
+        </div>
+        <% } %>
+
+        <% if (reporte.medicionEspesores) { %>
+        <div class="mb-10">
+          <strong>Medición de Espesores:</strong>
+          <div class="text-content"><%= reporte.medicionEspesores %></div>
+        </div>
+        <% } %>
+
+        <% if (reporte.pruebaHidrostatica) { %>
+        <div class="mb-10">
+          <strong>Prueba Hidrostática:</strong>
+          <div class="text-content"><%= reporte.pruebaHidrostatica %></div>
+        </div>
+        <% } %>
+
+        <% if (reporte.revisionInterna) { %>
+        <div class="mb-10">
+          <strong>Revisión Interna:</strong>
+          <div class="text-content"><%= reporte.revisionInterna %></div>
+        </div>
+        <% } %>
+
+        <% if (reporte.proteccionCatodica) { %>
+        <div class="mb-10">
+          <strong>Protección Catódica:</strong>
+          <div class="text-content"><%= reporte.proteccionCatodica %></div>
+        </div>
+        <% } %>
+
+        <% if (reporte.observacionesRecomendaciones) { %>
+        <div class="mb-10">
+          <strong>Observaciones y Recomendaciones:</strong>
+          <div class="text-content"><%= reporte.observacionesRecomendaciones %></div>
+        </div>
+        <% } %>
+      </div>
+    </div>
+
+    <!-- Resolución Aplicada -->
+    <div class="section">
+      <div class="section-title">6. Marco Normativo</div>
+      <div class="section-content">
+        <div class="field-row">
+          <span class="field-label">Resolución Aplicada:</span>
+          <span class="field-value"><%= inspection.resolucion || '—' %></span>
+        </div>
+        <div class="field-row">
+          <span class="field-label">Artículos:</span>
+          <span class="field-value"><%= inspection.articulos || '—' %></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Firmas -->
+    <div class="signatures">
+      <div class="signature-block">
+        <div class="signature-line">
+          <div class="signature-name"><%= inspection.inspector || '—' %></div>
+          <div class="signature-title">Inspector</div>
+        </div>
+      </div>
+      <div class="signature-block">
+        <div class="signature-line">
+          <div class="signature-name"><%= inspection.directorTecnico || '—' %></div>
+          <div class="signature-title">Director Técnico</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Página de fotos (si hay fotos) -->
+  <% if (photos && photos.length > 0) { %>
+  <div class="page">
+    <div class="header">
+      <div class="header-logo">
+        <div style="width: 80px; height: 40px; background: #0B3A84; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14pt;">
+          FARES
+        </div>
+      </div>
+      <div class="header-title">
+        <h1>Registro Fotográfico</h1>
+        <h2>Informe No. <%= certificate.numCert || '—' %></h2>
+      </div>
+      <div class="header-meta">
+        <p>Anexo Fotográfico</p>
+      </div>
+    </div>
+
+    <% Object.entries(photosByCategory).forEach(([category, categoryPhotos]) => { %>
+    <div class="section">
+      <div class="section-title"><%= PHOTO_CATEGORY_LABELS[category] || category %></div>
+      <div class="photos-grid">
+        <% categoryPhotos.forEach((photo) => { %>
+        <div class="photo-item">
+          <% if (photo.driveUrl) { %>
+          <img src="<%= photo.thumbnailUrl || photo.driveUrl %>" alt="<%= photo.description || category %>" />
+          <% } else { %>
+          <div style="width: 100%; height: 100px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; color: #999; font-size: 8pt;">
+            Imagen no disponible
+          </div>
+          <% } %>
+          <div class="photo-caption"><%= photo.description || '—' %></div>
+        </div>
+        <% }); %>
+      </div>
+    </div>
+    <% }); %>
+  </div>
+  <% } %>
+
+  <!-- Footer con fecha de generación -->
+  <div class="footer">
+    Documento generado el <%= new Date().toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) %>
+    | FARES - Organismo de Inspección Acreditado
+  </div>
+</body>
+</html>

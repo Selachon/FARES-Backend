@@ -7,6 +7,7 @@ import { userService } from "./userService.js";
 import { cacheService } from "./cacheService.js";
 import { performanceMonitor } from "./performanceMonitor.js";
 import { ObjectId } from "mongodb";
+import { normalizeInspeccionCompleta, normalizePhotos } from "./inspectionTypes.js";
 
 class CertificateService {
   constructor() {
@@ -447,6 +448,18 @@ class CertificateService {
       }
     }
 
+    // Nuevo: Actualizar inspección completa si viene en los datos
+    if (updateData.inspeccionCompleta !== undefined) {
+      updates.inspeccionCompleta = updateData.inspeccionCompleta
+        ? normalizeInspeccionCompleta(updateData.inspeccionCompleta)
+        : existing.inspeccionCompleta;
+    }
+
+    // Nuevo: Actualizar fotos si vienen en los datos
+    if (updateData.fotos !== undefined) {
+      updates.fotos = normalizePhotos(updateData.fotos);
+    }
+
     if (updates.tipoEquipo && !this.isValidEnum(updates.tipoEquipo, validEquipos)) {
       throw createError("tipoEquipo inválido. Usa TE o CT.", 400);
     }
@@ -529,10 +542,11 @@ class CertificateService {
   }
 
   
-  normalizeCertificate(certificate) {
+  normalizeCertificate(certificate, options = {}) {
+    const { includeFullInspection = false } = options;
     const exp = this.computeExpiry(certificate);
 
-    return {
+    const base = {
       id: certificate._id?.toString?.() || certificate.id,
       numCert: certificate.numCert,
       serial: certificate.serial,
@@ -554,7 +568,41 @@ class CertificateService {
       isExpiringSoon: !!exp?.isExpiringSoon,
 
       links: certificate.links || { informes: "#", formatos: "#", certificados: "#", anexos: "#", driveFolder: "#" },
+      
+      // Indicar si tiene inspección completa (para UI)
+      hasInspeccionCompleta: !!certificate.inspeccionCompleta,
+      // Número de fotos (para UI)
+      photosCount: Array.isArray(certificate.fotos) ? certificate.fotos.length : 0,
     };
+
+    // Incluir datos completos solo si se solicita (para vista detallada)
+    if (includeFullInspection) {
+      base.inspeccionCompleta = certificate.inspeccionCompleta 
+        ? normalizeInspeccionCompleta(certificate.inspeccionCompleta)
+        : null;
+      base.fotos = normalizePhotos(certificate.fotos);
+    }
+
+    return base;
+  }
+
+  /**
+   * Obtiene un certificado por ID con todos los detalles (inspección completa y fotos)
+   */
+  async getCertificateById(id) {
+    try {
+      const _id = new ObjectId(id);
+      const db = await connect();
+
+      const certificate = await db.collection(this.collectionName).findOne({ _id });
+      if (!certificate) throw createError("No existe el certificado", 404);
+
+      return this.normalizeCertificate(certificate, { includeFullInspection: true });
+    } catch (error) {
+      if (error.statusCode) throw error;
+      logger.error("Failed to get certificate by id", error);
+      throw createError("Error obteniendo certificado", 500);
+    }
   }
 
 }

@@ -22,6 +22,7 @@ import archiver from "archiver";
 import { ObjectId } from "mongodb";
 import { driveService } from "../driveService.js";
 import { excelService } from "../excelService.js";
+import { pdfService } from "../pdfService.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from 'url';
@@ -561,6 +562,453 @@ router.post(
     // Notify assigned users via SSE.
     notificationService.notifyCertificateCreated(created);
     res.status(201).json(created);
+  }),
+);
+
+// ==================== INSPECTION DETAIL ENDPOINTS ====================
+// Endpoints para obtener/actualizar inspección completa (fotos incluidas)
+
+/**
+ * Obtener detalle completo de un borrador (incluyendo inspeccionCompleta y fotos)
+ */
+router.get(
+  "/drafts/:id/detail",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const draft = await draftService.getDraftById(id);
+    res.json(draft);
+  }),
+);
+
+/**
+ * Obtener detalle completo de un certificado (incluyendo inspeccionCompleta y fotos)
+ */
+router.get(
+  "/certificates/:id/detail",
+  authenticate,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { role, username, empresa } = req.user;
+    
+    const certificate = await certificateService.getCertificateById(id);
+    
+    // Verificar permisos: ADMIN ve todo, USER solo sus certificados asignados
+    if (role !== "ADMIN") {
+      const isAssigned = certificate.assignedUsers?.includes(username);
+      const sameEmpresa = certificate.empresa === empresa;
+      if (!isAssigned || !sameEmpresa) {
+        return res.status(403).json({
+          message: "No tienes acceso a este certificado",
+          code: "INSUFFICIENT_PERMISSIONS",
+        });
+      }
+    }
+    
+    res.json(certificate);
+  }),
+);
+
+/**
+ * Actualizar inspección completa de un borrador
+ */
+router.put(
+  "/drafts/:id/inspection",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { inspeccionCompleta, fotos } = req.body;
+    
+    const draft = await draftService.updateDraft(id, {
+      inspeccionCompleta,
+      fotos,
+    }, {});
+    
+    res.json(draft);
+  }),
+);
+
+/**
+ * Actualizar inspección completa de un certificado
+ */
+router.put(
+  "/certificates/:id/inspection",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { inspeccionCompleta, fotos } = req.body;
+    
+    const certificate = await certificateService.updateCertificate(id, {
+      inspeccionCompleta,
+      fotos,
+    }, {});
+    
+    res.json(certificate);
+  }),
+);
+
+// ==================== PHOTO MANAGEMENT ENDPOINTS ====================
+
+/**
+ * Agregar foto a un borrador
+ */
+router.post(
+  "/drafts/:id/photos",
+  adminGuard,
+  upload.single("photo"),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { category, description, includeInPdf } = req.body;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({
+        message: "Se requiere una foto",
+        code: "MISSING_PHOTO",
+      });
+    }
+
+    const draft = await draftService.getDraftById(id);
+    const existingPhotos = draft.fotos || [];
+
+    // Subir foto a Drive
+    let photoData = {
+      id: `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      category: category || 'superficie',
+      description: description || '',
+      timestamp: new Date().toISOString(),
+      includeInPdf: includeInPdf !== 'false',
+      driveFileId: null,
+      driveUrl: null,
+    };
+
+    try {
+      const dbFolders = await driveService.getDriveFolders();
+      const photoFileName = `FOTO_${draft.serial || 'DRAFT'}_${category || 'foto'}_${Date.now()}.jpg`;
+      
+      const uploadResult = await driveService.uploadFile({
+        localPath: file.path,
+        fileName: photoFileName,
+        mimeType: file.mimetype || 'image/jpeg',
+        appProperties: {
+          NumCert: String(draft.numCert || 'DRAFT'),
+          Serial: String(draft.serial || 'DRAFT'),
+          Category: category || 'general',
+        },
+        folderId: dbFolders.INF || config.google.drive.parentFolderId,
+      });
+
+      photoData.driveFileId = uploadResult?.id || null;
+      photoData.driveUrl = uploadResult?.webViewLink || null;
+      photoData.thumbnailUrl = uploadResult?.thumbnailLink || null;
+    } catch (uploadErr) {
+      logger.warn("Failed to upload photo to Drive", { error: uploadErr.message });
+    } finally {
+      // Limpiar archivo temporal
+      try { fs.unlinkSync(file.path); } catch (_) {}
+    }
+
+    // Agregar foto al array existente
+    const updatedPhotos = [...existingPhotos, photoData];
+    
+    await draftService.updateDraft(id, { fotos: updatedPhotos }, {});
+    
+    res.status(201).json(photoData);
+  }),
+);
+
+/**
+ * Eliminar foto de un borrador
+ */
+router.delete(
+  "/drafts/:id/photos/:photoId",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id, photoId } = req.params;
+    
+    const draft = await draftService.getDraftById(id);
+    const existingPhotos = draft.fotos || [];
+    
+    const photoToDelete = existingPhotos.find(p => p.id === photoId);
+    if (!photoToDelete) {
+      return res.status(404).json({
+        message: "Foto no encontrada",
+        code: "PHOTO_NOT_FOUND",
+      });
+    }
+
+    // Intentar eliminar de Drive si existe
+    if (photoToDelete.driveFileId) {
+      try {
+        await driveService.deleteFile(photoToDelete.driveFileId);
+      } catch (deleteErr) {
+        logger.warn("Failed to delete photo from Drive", { 
+          fileId: photoToDelete.driveFileId, 
+          error: deleteErr.message 
+        });
+      }
+    }
+
+    // Actualizar array de fotos
+    const updatedPhotos = existingPhotos.filter(p => p.id !== photoId);
+    await draftService.updateDraft(id, { fotos: updatedPhotos }, {});
+    
+    res.json({ ok: true, deleted: photoId });
+  }),
+);
+
+/**
+ * Actualizar metadata de una foto (descripción, includeInPdf)
+ */
+router.put(
+  "/drafts/:id/photos/:photoId",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id, photoId } = req.params;
+    const { description, includeInPdf } = req.body;
+    
+    const draft = await draftService.getDraftById(id);
+    const existingPhotos = draft.fotos || [];
+    
+    const photoIndex = existingPhotos.findIndex(p => p.id === photoId);
+    if (photoIndex === -1) {
+      return res.status(404).json({
+        message: "Foto no encontrada",
+        code: "PHOTO_NOT_FOUND",
+      });
+    }
+
+    // Actualizar metadata
+    const updatedPhoto = {
+      ...existingPhotos[photoIndex],
+      ...(description !== undefined && { description }),
+      ...(includeInPdf !== undefined && { includeInPdf: includeInPdf !== false && includeInPdf !== 'false' }),
+    };
+
+    const updatedPhotos = [...existingPhotos];
+    updatedPhotos[photoIndex] = updatedPhoto;
+    
+    await draftService.updateDraft(id, { fotos: updatedPhotos }, {});
+    
+    res.json(updatedPhoto);
+  }),
+);
+
+// Endpoints similares para certificados
+router.post(
+  "/certificates/:id/photos",
+  adminGuard,
+  upload.single("photo"),
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { category, description, includeInPdf } = req.body;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({
+        message: "Se requiere una foto",
+        code: "MISSING_PHOTO",
+      });
+    }
+
+    const certificate = await certificateService.getCertificateById(id);
+    const existingPhotos = certificate.fotos || [];
+
+    let photoData = {
+      id: `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      category: category || 'superficie',
+      description: description || '',
+      timestamp: new Date().toISOString(),
+      includeInPdf: includeInPdf !== 'false',
+      driveFileId: null,
+      driveUrl: null,
+    };
+
+    try {
+      const dbFolders = await driveService.getDriveFolders();
+      const photoFileName = `FOTO_${certificate.serial || 'CERT'}_${category || 'foto'}_${Date.now()}.jpg`;
+      
+      const uploadResult = await driveService.uploadFile({
+        localPath: file.path,
+        fileName: photoFileName,
+        mimeType: file.mimetype || 'image/jpeg',
+        appProperties: {
+          NumCert: String(certificate.numCert || 'CERT'),
+          Serial: String(certificate.serial || 'CERT'),
+          Category: category || 'general',
+        },
+        folderId: dbFolders.INF || config.google.drive.parentFolderId,
+      });
+
+      photoData.driveFileId = uploadResult?.id || null;
+      photoData.driveUrl = uploadResult?.webViewLink || null;
+      photoData.thumbnailUrl = uploadResult?.thumbnailLink || null;
+    } catch (uploadErr) {
+      logger.warn("Failed to upload photo to Drive", { error: uploadErr.message });
+    } finally {
+      try { fs.unlinkSync(file.path); } catch (_) {}
+    }
+
+    const updatedPhotos = [...existingPhotos, photoData];
+    await certificateService.updateCertificate(id, { fotos: updatedPhotos }, {});
+    
+    res.status(201).json(photoData);
+  }),
+);
+
+router.delete(
+  "/certificates/:id/photos/:photoId",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id, photoId } = req.params;
+    
+    const certificate = await certificateService.getCertificateById(id);
+    const existingPhotos = certificate.fotos || [];
+    
+    const photoToDelete = existingPhotos.find(p => p.id === photoId);
+    if (!photoToDelete) {
+      return res.status(404).json({
+        message: "Foto no encontrada",
+        code: "PHOTO_NOT_FOUND",
+      });
+    }
+
+    if (photoToDelete.driveFileId) {
+      try {
+        await driveService.deleteFile(photoToDelete.driveFileId);
+      } catch (deleteErr) {
+        logger.warn("Failed to delete photo from Drive", { 
+          fileId: photoToDelete.driveFileId, 
+          error: deleteErr.message 
+        });
+      }
+    }
+
+    const updatedPhotos = existingPhotos.filter(p => p.id !== photoId);
+    await certificateService.updateCertificate(id, { fotos: updatedPhotos }, {});
+    
+    res.json({ ok: true, deleted: photoId });
+  }),
+);
+
+router.put(
+  "/certificates/:id/photos/:photoId",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id, photoId } = req.params;
+    const { description, includeInPdf } = req.body;
+    
+    const certificate = await certificateService.getCertificateById(id);
+    const existingPhotos = certificate.fotos || [];
+    
+    const photoIndex = existingPhotos.findIndex(p => p.id === photoId);
+    if (photoIndex === -1) {
+      return res.status(404).json({
+        message: "Foto no encontrada",
+        code: "PHOTO_NOT_FOUND",
+      });
+    }
+
+    const updatedPhoto = {
+      ...existingPhotos[photoIndex],
+      ...(description !== undefined && { description }),
+      ...(includeInPdf !== undefined && { includeInPdf: includeInPdf !== false && includeInPdf !== 'false' }),
+    };
+
+    const updatedPhotos = [...existingPhotos];
+    updatedPhotos[photoIndex] = updatedPhoto;
+    
+    await certificateService.updateCertificate(id, { fotos: updatedPhotos }, {});
+    
+    res.json(updatedPhoto);
+  }),
+);
+
+// ==================== PDF GENERATION ENDPOINTS ====================
+
+/**
+ * Generar PDF de un borrador (preview, no sube a Drive)
+ */
+router.post(
+  "/drafts/:id/generate-pdf",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { selectedPhotoIds } = req.body;
+
+    const draft = await draftService.getDraftById(id);
+    
+    if (!draft.inspeccionCompleta) {
+      return res.status(400).json({
+        message: "El borrador no tiene datos de inspección completa",
+        code: "MISSING_INSPECTION_DATA",
+      });
+    }
+
+    const pdfBuffer = await pdfService.generatePdf(draft, selectedPhotoIds);
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="INF_${draft.empresa || 'DRAFT'}_${draft.numCert || 'DRAFT'}_${draft.serial || 'SERIAL'}.pdf"`
+    );
+    res.send(pdfBuffer);
+  }),
+);
+
+/**
+ * Generar PDF de un certificado y subirlo a Drive
+ * Reemplaza el documento de informe existente
+ */
+router.post(
+  "/certificates/:id/generate-pdf",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { selectedPhotoIds, uploadToDrive = true } = req.body;
+
+    const certificate = await certificateService.getCertificateById(id);
+    
+    if (!certificate.inspeccionCompleta) {
+      return res.status(400).json({
+        message: "El certificado no tiene datos de inspección completa",
+        code: "MISSING_INSPECTION_DATA",
+      });
+    }
+
+    if (uploadToDrive) {
+      // Generar y subir a Drive
+      const { pdfUrl, pdfFileId } = await pdfService.generateAndUploadPdf(
+        certificate,
+        selectedPhotoIds
+      );
+
+      // Actualizar link del informe en el certificado
+      const existingLinks = certificate.links || {};
+      const updatedLinks = {
+        ...existingLinks,
+        informes: pdfUrl || existingLinks.informes,
+      };
+
+      await certificateService.updateCertificate(id, { links: updatedLinks }, {});
+
+      res.json({
+        success: true,
+        pdfUrl,
+        pdfFileId,
+        message: "PDF generado y subido a Drive exitosamente",
+      });
+    } else {
+      // Solo generar y descargar
+      const pdfBuffer = await pdfService.generatePdf(certificate, selectedPhotoIds);
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="INF_${certificate.empresa}_${certificate.numCert}_${certificate.serial}.pdf"`
+      );
+      res.send(pdfBuffer);
+    }
   }),
 );
 
@@ -1117,8 +1565,86 @@ router.post(
         link: excelUploadResult?.webViewLink,
       });
 
-      // 4) Create draft with generated document links.
-      logger.info("Step 4: Creating draft");
+      // 4) Upload photos to Drive and prepare photo metadata
+      logger.info("Step 4: Processing photos for Drive upload");
+      const processedPhotos = [];
+      
+      if (Array.isArray(inspectionData?.fotos) && photoFiles.length > 0) {
+        const dbFoldersForPhotos = await driveService.getDriveFolders();
+        // Crear carpeta de fotos específica para este draft si no existe
+        // Por ahora subimos a la carpeta general, se moverán cuando se publique
+        
+        for (const photo of inspectionData.fotos) {
+          if (!photo?.uploadedPath) {
+            // Foto sin archivo subido, mantener metadata
+            processedPhotos.push({
+              id: photo.id || `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              category: photo.category || 'superficie',
+              description: photo.description || '',
+              timestamp: photo.timestamp || new Date().toISOString(),
+              includeInPdf: true,
+              driveFileId: null,
+              driveUrl: null,
+            });
+            continue;
+          }
+
+          try {
+            // Subir foto a Drive
+            const photoFileName = `FOTO_${serialForName}_${photo.category || 'foto'}_${Date.now()}.jpg`;
+            const photoUploadResult = await driveService.uploadFile({
+              localPath: photo.uploadedPath,
+              fileName: photoFileName,
+              mimeType: photo.uploadedMimeType || 'image/jpeg',
+              appProperties: {
+                NumCert: String(numCertForName),
+                Serial: String(serialForName),
+                Category: photo.category || 'general',
+              },
+              folderId: dbFoldersForPhotos.INF || config.google.drive.parentFolderId,
+            });
+
+            processedPhotos.push({
+              id: photo.id || `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              category: photo.category || 'superficie',
+              description: photo.description || '',
+              timestamp: photo.timestamp || new Date().toISOString(),
+              includeInPdf: true,
+              driveFileId: photoUploadResult?.id || null,
+              driveUrl: photoUploadResult?.webViewLink || null,
+              thumbnailUrl: photoUploadResult?.thumbnailLink || null,
+            });
+
+            logger.info("Photo uploaded to Drive", {
+              category: photo.category,
+              fileId: photoUploadResult?.id,
+            });
+          } catch (photoErr) {
+            logger.warn("Failed to upload photo to Drive", {
+              category: photo.category,
+              error: photoErr.message,
+            });
+            // Mantener la foto sin URL de Drive
+            processedPhotos.push({
+              id: photo.id || `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              category: photo.category || 'superficie',
+              description: photo.description || '',
+              timestamp: photo.timestamp || new Date().toISOString(),
+              includeInPdf: true,
+              driveFileId: null,
+              driveUrl: null,
+            });
+          }
+        }
+      }
+
+      logger.info("Step 4 complete: Photos processed", { 
+        total: processedPhotos.length,
+        uploadedToDrive: processedPhotos.filter(p => p.driveFileId).length,
+      });
+
+      // 5) Create draft with inspection data and photo metadata
+      logger.info("Step 5: Creating draft with full inspection data");
       const files = {};
 
       if (ENABLE_AUTO_PDF) {
@@ -1135,8 +1661,16 @@ router.post(
         formatos: excelUploadResult?.webViewLink || '#',
       };
 
+      // NUEVO: Pasar la inspección completa y las fotos procesadas al draft
+      draftData.inspeccionCompleta = inspectionData;
+      draftData.fotos = processedPhotos;
+
       draft = await draftService.createDraft(draftData, files);
-      logger.info("Step 4 complete: Draft created", { draftId: draft?.id });
+      logger.info("Step 5 complete: Draft created with full inspection", { 
+        draftId: draft?.id,
+        hasInspeccionCompleta: !!draft?.hasInspeccionCompleta,
+        photosCount: draft?.photosCount || 0,
+      });
       logger.info("App draft sync completed", {
         draftId: draft?.id,
         elapsedMs: Date.now() - startedAt,
