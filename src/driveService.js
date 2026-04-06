@@ -419,7 +419,7 @@ class DriveService {
           description: this.buildDescription(appProperties),
         },
         media,
-        fields: "id, webViewLink, webContentLink",
+        fields: "id, webViewLink, webContentLink, thumbnailLink",
         supportsAllDrives: true,
       });
 
