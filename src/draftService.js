@@ -7,6 +7,11 @@ import { userService } from "./userService.js";
 import { cacheService } from "./cacheService.js";
 import { ObjectId } from "mongodb";
 import { certificateService } from "./certificateService.js";
+import {
+  PHOTO_CATEGORY_LABELS,
+  normalizeInspeccionCompleta,
+  normalizePhotos,
+} from "./inspectionTypes.js";
 
 class DraftService {
   constructor() {
@@ -18,8 +23,10 @@ class DraftService {
     return allowed.includes(String(value || "").trim());
   }
 
-  normalizeDraft(d) {
-    return {
+  normalizeDraft(d, options = {}) {
+    const { includeFullInspection = false } = options;
+    
+    const base = {
       id: d._id?.toString?.() || d.id,
       numCert: d.numCert ?? null,
       serial: d.serial ?? "",
@@ -35,7 +42,42 @@ class DraftService {
       createdAt: d.createdAt ? new Date(d.createdAt).toISOString() : null,
       updatedAt: d.updatedAt ? new Date(d.updatedAt).toISOString() : null,
       localId: d.localId || null,
+      // Indicar si tiene inspección completa (para UI)
+      hasInspeccionCompleta: !!d.inspeccionCompleta,
+      // Número de fotos (para UI)
+      photosCount: Array.isArray(d.fotos) ? d.fotos.length : 0,
     };
+
+    // Incluir datos completos solo si se solicita (para vista detallada)
+    if (includeFullInspection) {
+      base.inspeccionCompleta = d.inspeccionCompleta 
+        ? normalizeInspeccionCompleta(d.inspeccionCompleta)
+        : null;
+      base.fotos = normalizePhotos(d.fotos);
+    }
+
+    return base;
+  }
+
+  async getNextDraftNumber(db) {
+    const [latestDraft, latestCertificate] = await Promise.all([
+      db
+        .collection(this.collectionName)
+        .find({ numCert: { $type: "number" } })
+        .sort({ numCert: -1 })
+        .limit(1)
+        .toArray(),
+      db
+        .collection("certificates")
+        .find({ numCert: { $type: "number" } })
+        .sort({ numCert: -1 })
+        .limit(1)
+        .toArray(),
+    ]);
+
+    const maxDraft = latestDraft?.[0]?.numCert || 0;
+    const maxCertificate = latestCertificate?.[0]?.numCert || 0;
+    return Math.max(maxDraft, maxCertificate) + 1;
   }
 
   
@@ -69,10 +111,206 @@ class DraftService {
       // IDEMPOTENCY CHECK FIRST: Prevent duplicate uploads on retries
       // Must happen BEFORE any side effects (file uploads)
       if (localId) {
-        const existing = await db
-          .collection(this.collectionName)
-          .findOne({ localId });
+        const collection = db.collection(this.collectionName);
+        const existing = await collection.findOne({ localId });
         if (existing) {
+          const now = new Date();
+          const patch = {};
+
+          const countFilledValues = (value) => {
+            if (value === null || value === undefined) return 0;
+            if (Array.isArray(value)) {
+              return value.reduce((sum, item) => sum + countFilledValues(item), 0);
+            }
+            if (typeof value === "object") {
+              return Object.values(value).reduce(
+                (sum, item) => sum + countFilledValues(item),
+                0,
+              );
+            }
+            if (typeof value === "string") return value.trim() ? 1 : 0;
+            if (typeof value === "number") return Number.isFinite(value) ? 1 : 0;
+            if (typeof value === "boolean") return 1;
+            return 0;
+          };
+
+          const existingInspection = existing.inspeccionCompleta
+            ? normalizeInspeccionCompleta(existing.inspeccionCompleta)
+            : null;
+          const incomingInspection = data.inspeccionCompleta
+            ? normalizeInspeccionCompleta(data.inspeccionCompleta)
+            : null;
+          const incomingSource = sanitizeString(data.source || existing.source || "")
+            .toLowerCase();
+          const isAppSource = incomingSource === "offline_app";
+
+          const existingInspectionMissingCore =
+            !existingInspection ||
+            !String(existingInspection?.informacionItem?.numeroSerie || "").trim() ||
+            !String(existingInspection?.datosCliente?.cliente || "").trim();
+
+          const incomingInspectionHasCore =
+            !!incomingInspection &&
+            (String(incomingInspection?.informacionItem?.numeroSerie || "").trim() ||
+              String(incomingInspection?.datosCliente?.cliente || "").trim() ||
+              String(incomingInspection?.datosCliente?.nit || "").trim());
+          const existingInspectionScore = countFilledValues(existingInspection);
+          const incomingInspectionScore = countFilledValues(incomingInspection);
+          const incomingIsNotWorse = incomingInspectionScore >= existingInspectionScore;
+
+          if (
+            incomingInspectionHasCore &&
+            (existingInspectionMissingCore ||
+              incomingInspectionScore > existingInspectionScore ||
+              (isAppSource && incomingIsNotWorse))
+          ) {
+            patch.inspeccionCompleta = incomingInspection;
+          }
+
+          const existingPhotos = normalizePhotos(existing.fotos);
+          const incomingPhotos = normalizePhotos(data.fotos);
+          if (incomingPhotos.length > 0) {
+            const photoQualityScore = (photo) => {
+              if (!photo) return 0;
+              let score = 0;
+              if (photo.driveFileId) score += 4;
+              if (photo.driveUrl) score += 3;
+              if (photo.thumbnailUrl) score += 1;
+              if (photo.description) score += 1;
+              if (photo.timestamp) score += 1;
+              return score;
+            };
+
+            const photoKey = (photo, index) =>
+              String(
+                photo?.id ||
+                  `${photo?.category || "photo"}_${photo?.timestamp || index}`,
+              );
+
+            const mergedPhotosMap = new Map();
+            existingPhotos.forEach((photo, index) => {
+              mergedPhotosMap.set(photoKey(photo, index), photo);
+            });
+            incomingPhotos.forEach((photo, index) => {
+              const key = photoKey(photo, index);
+              const current = mergedPhotosMap.get(key);
+              if (!current || photoQualityScore(photo) >= photoQualityScore(current)) {
+                mergedPhotosMap.set(key, photo);
+              }
+            });
+
+            const mergedPhotos = Array.from(mergedPhotosMap.values());
+            const mergedChanged =
+              JSON.stringify(mergedPhotos) !== JSON.stringify(existingPhotos);
+            const shouldPatchPhotos =
+              incomingPhotos.length > existingPhotos.length ||
+              (isAppSource && mergedChanged);
+
+            if (shouldPatchPhotos) {
+              patch.fotos = mergedPhotos;
+            }
+          }
+
+          const existingNumCert = Number(existing.numCert);
+          if (!existing.numCert || Number.isNaN(existingNumCert)) {
+            patch.numCert = await this.getNextDraftNumber(db);
+          }
+
+          if (!String(existing.serial || "").trim() && data.serial !== undefined) {
+            patch.serial = sanitizeString(data.serial);
+          }
+
+          if (!String(existing.empresa || "").trim() && data.empresa !== undefined) {
+            patch.empresa = sanitizeString(data.empresa);
+          }
+
+          if (!String(existing.resultado || "").trim() && data.resultado !== undefined) {
+            patch.resultado = sanitizeString(data.resultado);
+          }
+
+          const incomingTipoEquipo =
+            data.tipoEquipo !== undefined
+              ? String(data.tipoEquipo).trim().toUpperCase()
+              : "";
+          if (
+            !String(existing.tipoEquipo || "").trim() &&
+            this.isValidEnum(incomingTipoEquipo, ["TE", "CT"])
+          ) {
+            patch.tipoEquipo = incomingTipoEquipo;
+          }
+
+          const incomingTipoInspeccion =
+            data.tipoInspeccion !== undefined
+              ? String(data.tipoInspeccion).trim().toUpperCase()
+              : "";
+          if (
+            !String(existing.tipoInspeccion || "").trim() &&
+            this.isValidEnum(incomingTipoInspeccion, ["PARCIAL", "TOTAL"])
+          ) {
+            patch.tipoInspeccion = incomingTipoInspeccion;
+          }
+
+          const existingAssignedUsers = Array.isArray(existing.assignedUsers)
+            ? existing.assignedUsers
+            : [];
+          const incomingAssignedUsers = parseUserList(data.assignedUsers);
+          if (existingAssignedUsers.length === 0 && incomingAssignedUsers.length > 0) {
+            patch.assignedUsers = incomingAssignedUsers;
+          }
+
+          const incomingFechaCargue = data.fechaCargue
+            ? new Date(data.fechaCargue)
+            : null;
+          if (
+            !existing.fechaCargue &&
+            incomingFechaCargue &&
+            !Number.isNaN(incomingFechaCargue.getTime())
+          ) {
+            patch.fechaCargue = incomingFechaCargue;
+          }
+
+          const incomingFormatosLink = sanitizeString(data.links?.formatos);
+          if (incomingFormatosLink && incomingFormatosLink !== "#") {
+            const existingLinks = existing.links || {};
+            const existingFormatosLink = sanitizeString(existingLinks.formatos);
+            if (!existingFormatosLink || existingFormatosLink === "#") {
+              patch.links = { ...existingLinks, formatos: incomingFormatosLink };
+            }
+          }
+
+          const incomingStorage =
+            data.storage && typeof data.storage === "object" ? data.storage : null;
+          if (incomingStorage?.rootFolderId) {
+            const existingStorage =
+              existing.storage && typeof existing.storage === "object"
+                ? existing.storage
+                : {};
+            const mergedStorage = {
+              ...existingStorage,
+              ...incomingStorage,
+              sectionFolders: {
+                ...(existingStorage.sectionFolders || {}),
+                ...(incomingStorage.sectionFolders || {}),
+              },
+            };
+
+            if (JSON.stringify(mergedStorage) !== JSON.stringify(existingStorage)) {
+              patch.storage = mergedStorage;
+            }
+          }
+
+          if (Object.keys(patch).length > 0) {
+            patch.updatedAt = now;
+            await collection.updateOne({ _id: existing._id }, { $set: patch });
+            const refreshed = await collection.findOne({ _id: existing._id });
+            cacheService.clear("all_drafts");
+            logger.info("Draft already exists, refreshed with incoming data", {
+              localId,
+              patchedFields: Object.keys(patch),
+            });
+            return this.normalizeDraft(refreshed);
+          }
+
           logger.info("Draft already exists, returning existing", { localId });
           return this.normalizeDraft(existing);
         }
@@ -112,7 +350,19 @@ class DraftService {
         createdAt: new Date(),
         updatedAt: new Date(),
         localId,
+        storage:
+          data.storage && typeof data.storage === "object" ? data.storage : null,
+        // Nuevo: Inspección completa (datos del formulario de la app)
+        inspeccionCompleta: data.inspeccionCompleta 
+          ? normalizeInspeccionCompleta(data.inspeccionCompleta)
+          : null,
+        // Nuevo: Fotos de la inspección
+        fotos: normalizePhotos(data.fotos),
       };
+
+      if (!doc.numCert || Number.isNaN(doc.numCert)) {
+        doc.numCert = await this.getNextDraftNumber(db);
+      }
 
       // Validate enums before any uploads
       if (doc.tipoEquipo && !this.isValidEnum(doc.tipoEquipo, ["TE", "CT"])) {
@@ -207,6 +457,18 @@ class DraftService {
       else updates[field] = sanitizeString(data[field]);
     }
 
+    // Nuevo: Actualizar inspección completa si viene en los datos
+    if (data.inspeccionCompleta !== undefined) {
+      updates.inspeccionCompleta = data.inspeccionCompleta
+        ? normalizeInspeccionCompleta(data.inspeccionCompleta)
+        : existing.inspeccionCompleta;
+    }
+
+    // Nuevo: Actualizar fotos si vienen en los datos
+    if (data.fotos !== undefined) {
+      updates.fotos = normalizePhotos(data.fotos);
+    }
+
     // valida enums si vienen
     if (
       updates.tipoEquipo &&
@@ -294,6 +556,25 @@ class DraftService {
     }
   }
 
+  /**
+   * Obtiene un borrador por ID con todos los detalles (inspección completa y fotos)
+   */
+  async getDraftById(id) {
+    try {
+      const _id = new ObjectId(id);
+      const db = await connect();
+
+      const draft = await db.collection(this.collectionName).findOne({ _id });
+      if (!draft) throw createError("No existe el borrador", 404);
+
+      return this.normalizeDraft(draft, { includeFullInspection: true });
+    } catch (error) {
+      if (error.statusCode) throw error;
+      logger.error("Failed to get draft by id", error);
+      throw createError("Error obteniendo borrador", 500);
+    }
+  }
+
   async deleteDraftsByIds(ids) {
     try {
       if (!Array.isArray(ids) || ids.length === 0) {
@@ -349,6 +630,154 @@ class DraftService {
     return { te, ti };
   }
 
+  sanitizeFolderName(name) {
+    return String(name || "Otros")
+      .replace(/[\\/]/g, " - ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  getPhotoSectionFolderName(category) {
+    const label = PHOTO_CATEGORY_LABELS[String(category || "")] || "Otros";
+    return this.sanitizeFolderName(label);
+  }
+
+  async organizeDriveAssetsForPublish(draft) {
+    const links = { ...(draft.links || {}) };
+    const photos = Array.isArray(draft.fotos) ? [...draft.fotos] : [];
+    let storage = draft.storage || null;
+    const trace = {
+      filesMoved: 0,
+      filesMoveErrors: 0,
+      photosMoved: 0,
+      photosMoveErrors: 0,
+      sectionsCreated: 0,
+    };
+
+    if (!draft.numCert) {
+      return { links, photos, storage };
+    }
+
+    try {
+      if (!storage?.rootFolderId) {
+        storage = await driveService.ensureCertificateFolderTree(draft.numCert);
+      }
+
+      if (!storage?.rootFolderId) {
+        return { links, photos, storage };
+      }
+
+      if (!links.driveFolder || links.driveFolder === "#") {
+        links.driveFolder =
+          storage.rootFolderLink ||
+          `https://drive.google.com/drive/folders/${storage.rootFolderId}`;
+      }
+
+      logger.info("Publish drive organization started", {
+        numCert: draft.numCert,
+        rootFolderId: storage.rootFolderId,
+        registrosFotograficosFolderId: storage.registrosFotograficosFolderId,
+        photosWithDriveId: photos.filter((p) => p?.driveFileId).length,
+      });
+
+      const fileLinkKeys = ["informes", "formatos", "certificados", "anexos"];
+      for (const key of fileLinkKeys) {
+        const link = links[key];
+        const fileId = driveService.extractFileIdFromLink(link);
+        if (!fileId) continue;
+
+        try {
+          const moved = await driveService.moveFile(fileId, storage.rootFolderId);
+          trace.filesMoved += 1;
+          if (moved?.webViewLink) {
+            links[key] = moved.webViewLink;
+          }
+        } catch (error) {
+          trace.filesMoveErrors += 1;
+          logger.warn("Could not move draft file during publish", {
+            key,
+            fileId,
+            numCert: draft.numCert,
+            error: error.message,
+          });
+        }
+      }
+
+      if (!storage.registrosFotograficosFolderId || photos.length === 0) {
+        return { links, photos, storage };
+      }
+
+      const sectionFolders = { ...(storage.sectionFolders || {}) };
+
+      for (let i = 0; i < photos.length; i += 1) {
+        const photo = photos[i];
+        if (!photo?.driveFileId) continue;
+
+        const category = String(photo.category || "otros");
+        let sectionFolderId = sectionFolders[category] || null;
+
+        if (!sectionFolderId) {
+          try {
+            const sectionName = this.getPhotoSectionFolderName(category);
+            const folder = await driveService.ensurePhotoSectionFolder(
+              storage.registrosFotograficosFolderId,
+              sectionName,
+            );
+            sectionFolderId = folder?.id || null;
+            if (sectionFolderId) {
+              sectionFolders[category] = sectionFolderId;
+              trace.sectionsCreated += 1;
+            }
+          } catch (error) {
+            logger.warn("Could not ensure photo section folder during publish", {
+              category,
+              numCert: draft.numCert,
+              error: error.message,
+            });
+            continue;
+          }
+        }
+
+        if (!sectionFolderId) continue;
+
+        try {
+          const moved = await driveService.moveFile(photo.driveFileId, sectionFolderId);
+          trace.photosMoved += 1;
+          if (moved?.webViewLink) {
+            photos[i] = { ...photo, driveUrl: moved.webViewLink };
+          }
+        } catch (error) {
+          trace.photosMoveErrors += 1;
+          logger.warn("Could not move photo during draft publish", {
+            photoId: photo.id,
+            driveFileId: photo.driveFileId,
+            category,
+            numCert: draft.numCert,
+            error: error.message,
+          });
+        }
+      }
+
+      storage = {
+        ...storage,
+        sectionFolders,
+      };
+
+      logger.info("Publish drive organization completed", {
+        numCert: draft.numCert,
+        ...trace,
+      });
+
+      return { links, photos, storage };
+    } catch (error) {
+      logger.warn("Drive organization skipped during draft publish", {
+        numCert: draft.numCert,
+        error: error.message,
+      });
+      return { links, photos, storage };
+    }
+  }
+
   async publishDraft(id) {
     try {
       const _id = new ObjectId(id);
@@ -358,6 +787,8 @@ class DraftService {
       if (!draft) throw createError("No existe el borrador", 404);
 
       const { te, ti } = this.validatePublishableDraft(draft);
+
+      const preparedDriveAssets = await this.organizeDriveAssetsForPublish(draft);
 
       
       await userService.validateUsersExist(draft.assignedUsers, draft.empresa);
@@ -378,7 +809,7 @@ class DraftService {
         tipoInspeccion: ti,
         status: "ACTIVO",
         renewedAt: null,
-        links: draft.links || {
+        links: preparedDriveAssets.links || {
           informes: "#",
           formatos: "#",
           certificados: "#",
@@ -386,6 +817,14 @@ class DraftService {
           driveFolder: "#",
         },
         createdAt: new Date(),
+        // Nuevo: Copiar inspección completa del borrador
+        inspeccionCompleta: draft.inspeccionCompleta || null,
+        // Nuevo: Copiar fotos del borrador
+        fotos: Array.isArray(preparedDriveAssets.photos)
+          ? preparedDriveAssets.photos
+          : [],
+        // Copiar storage si existe
+        storage: preparedDriveAssets.storage || draft.storage || null,
       };
 
       const computed = certificateService.computeExpiry(document);

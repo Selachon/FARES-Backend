@@ -293,6 +293,7 @@ export const appGuard = (req, res, next) => {
         deviceId: decoded.deviceId,
         platform: decoded.platform,
         appVersion: decoded.appVersion,
+        inspector: decoded.inspector,
         auth: "bearer",
       };
 

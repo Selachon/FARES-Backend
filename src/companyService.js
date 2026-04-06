@@ -14,6 +14,130 @@ class CompanyService {
     return sanitizeString(name).toUpperCase();
   }
 
+  normalizeDetail(value) {
+    return sanitizeString(value || "");
+  }
+
+  getDocTimestamp(doc) {
+    const ts = doc?.updatedAt || doc?.createdAt;
+    if (!ts) return 0;
+    const parsed = new Date(ts).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  companyMatchQuery(name) {
+    const escaped = String(name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return { $regex: `^${escaped}$`, $options: "i" };
+  }
+
+  extractClientData(doc) {
+    const data = doc?.inspeccionCompleta?.datosCliente || {};
+    return {
+      nit: this.normalizeDetail(data.nit),
+      direccion: this.normalizeDetail(data.direccion),
+      ciudad: this.normalizeDetail(data.ciudad),
+      telefono: this.normalizeDetail(data.telefono),
+    };
+  }
+
+  mergeProfile(base, inferred) {
+    return {
+      name: base.name,
+      nit: base.nit || inferred.nit || "",
+      direccion: base.direccion || inferred.direccion || "",
+      ciudad: base.ciudad || inferred.ciudad || "",
+      telefono: base.telefono || inferred.telefono || "",
+    };
+  }
+
+  async getCompanyProfile(name) {
+    try {
+      const normalized = this.normalizeName(name);
+      if (!normalized) {
+        throw createError("Nombre de empresa requerido", 400, "MISSING_COMPANY");
+      }
+
+      performanceMonitor.trackDbQuery();
+      const db = await connect();
+      const companies = db.collection(this.collectionName);
+
+      const companyDoc = await companies.findOne({ name: normalized });
+
+      const base = {
+        name: normalized,
+        nit: this.normalizeDetail(companyDoc?.nit),
+        direccion: this.normalizeDetail(companyDoc?.direccion),
+        ciudad: this.normalizeDetail(companyDoc?.ciudad),
+        telefono: this.normalizeDetail(companyDoc?.telefono),
+      };
+
+      const projection = {
+        projection: {
+          inspeccionCompleta: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        sort: { updatedAt: -1, createdAt: -1 },
+      };
+
+      const [latestCertificate, latestDraft] = await Promise.all([
+        db
+          .collection("certificates")
+          .findOne(
+            {
+              empresa: this.companyMatchQuery(normalized),
+              "inspeccionCompleta.datosCliente": { $exists: true },
+            },
+            projection,
+          ),
+        db
+          .collection("drafts")
+          .findOne(
+            {
+              empresa: this.companyMatchQuery(normalized),
+              "inspeccionCompleta.datosCliente": { $exists: true },
+            },
+            projection,
+          ),
+      ]);
+
+      const candidates = [latestCertificate, latestDraft].filter(Boolean);
+      const latest = candidates.sort(
+        (a, b) => this.getDocTimestamp(b) - this.getDocTimestamp(a),
+      )[0];
+
+      const inferred = latest ? this.extractClientData(latest) : {};
+      return this.mergeProfile(base, inferred);
+    } catch (error) {
+      if (error.statusCode) throw error;
+      logger.error("Failed to get company profile", error);
+      throw createError("Error obteniendo perfil de empresa", 500);
+    }
+  }
+
+  async getAllCompanyProfiles() {
+    try {
+      const names = await this.getAllCompanies();
+      if (!Array.isArray(names) || names.length === 0) return [];
+
+      const profiles = await Promise.all(
+        names.map(async (name) => {
+          try {
+            return await this.getCompanyProfile(name);
+          } catch (_) {
+            return { name };
+          }
+        }),
+      );
+
+      return profiles.sort((a, b) => a.name.localeCompare(b.name, "es"));
+    } catch (error) {
+      if (error.statusCode) throw error;
+      logger.error("Failed to get all company profiles", error);
+      throw createError("Error obteniendo perfiles de empresa", 500);
+    }
+  }
+
   async getAllCompanies() {
     try {
       performanceMonitor.trackDbQuery();
