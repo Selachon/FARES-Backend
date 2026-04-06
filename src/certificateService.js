@@ -14,6 +14,27 @@ class CertificateService {
     this.collectionName = "certificates";
   }
 
+  async getNextCertificateNumber(db) {
+    const [latestCertificate, latestDraft] = await Promise.all([
+      db
+        .collection(this.collectionName)
+        .find({ numCert: { $type: "number" } })
+        .sort({ numCert: -1 })
+        .limit(1)
+        .toArray(),
+      db
+        .collection("drafts")
+        .find({ numCert: { $type: "number" } })
+        .sort({ numCert: -1 })
+        .limit(1)
+        .toArray(),
+    ]);
+
+    const maxCertificate = latestCertificate?.[0]?.numCert || 0;
+    const maxDraft = latestDraft?.[0]?.numCert || 0;
+    return Math.max(maxCertificate, maxDraft) + 1;
+  }
+
   isValidEnum(value, allowed) {
     return allowed.includes(String(value || "").trim());
   }
@@ -156,9 +177,13 @@ class CertificateService {
         tipoInspeccion,
       } = certificateData;
 
-      
+      const db = await connect();
+      const autoNumCert = (!numCert || String(numCert).trim() === "")
+        ? await this.getNextCertificateNumber(db)
+        : numCert;
+
       const validatedData = this.validateCertificateData({
-        numCert,
+        numCert: autoNumCert,
         serial,
         empresa,
         assignedUsers,
@@ -199,8 +224,6 @@ class CertificateService {
         ...(uploadResult || {}),
       };
 
-      const db = await connect();
-      
       const document = {
         numCert: Number(validatedData.numCert),
         serial: validatedData.serial,

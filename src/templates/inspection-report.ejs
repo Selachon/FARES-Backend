@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Informe de Inspección - <%= certificate.numCert || 'Borrador' %></title>
+  <title>Informe de Inspección</title>
   <style>
     * {
       margin: 0;
@@ -38,13 +38,32 @@
       margin-bottom: 15px;
     }
 
-    .header-logo {
-      width: 100px;
+    .header-brand {
+      min-width: 190px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
 
     .header-logo img {
       max-width: 100%;
       height: auto;
+    }
+
+    .fares-logo img {
+      width: 124px;
+      max-height: 58px;
+      object-fit: contain;
+    }
+
+    .onac-logo img {
+      width: 170px;
+      max-height: 58px;
+      object-fit: contain;
+    }
+
+    .header-logo-empty {
+      min-width: 190px;
     }
 
     .header-title {
@@ -274,18 +293,31 @@
   <div class="page">
     <!-- Header -->
     <div class="header">
-      <div class="header-logo">
-        <div style="width: 80px; height: 40px; background: #0B3A84; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14pt;">
-          FARES
+      <div class="header-brand">
+        <div class="header-logo fares-logo">
+          <% if (faresLogo) { %>
+          <img src="<%= faresLogo %>" alt="FARES" />
+          <% } else { %>
+          <div style="width: 124px; height: 44px; background: #0B3A84; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12pt;">FARES</div>
+          <% } %>
+        </div>
+        <div class="header-logo onac-logo">
+          <% if (onacLogo) { %>
+          <img src="<%= onacLogo %>" alt="ONAC acreditado" />
+          <% } %>
         </div>
       </div>
       <div class="header-title">
         <h1>Informe de Inspección</h1>
-        <h2>Recipientes a Presión para GLP</h2>
+        <h2>ID-PS-10</h2>
       </div>
       <div class="header-meta">
+        <p><strong>Código:</strong> ID-PS-10</p>
+        <p><strong>Versión:</strong> 6</p>
+        <p><strong>Fecha:</strong> 2026-04-01</p>
         <p><strong>Informe No:</strong> <%= certificate.numCert || '—' %></p>
-        <p><strong>Fecha:</strong> <%= formatDate(inspection.datosInforme?.fechaInspeccion) %></p>
+        <p><strong>Fecha de Inspección:</strong> <%= formatDate(inspection.datosInforme?.fechaInspeccion) %></p>
+        <p><strong>Fecha de Expedición:</strong> <%= formatDate(inspection.datosInforme?.fechaExpedicion || inspection.datosInforme?.fechaInspeccion) %></p>
         <p><strong>Tipo:</strong> <%= inspection.datosInforme?.tipoInspeccion || certificate.tipoInspeccion || '—' %></p>
       </div>
     </div>
@@ -300,9 +332,34 @@
       <span class="result-badge <%= resultClass %>"><%= resultado %></span>
     </div>
 
+    <!-- Datos del Informe -->
+    <div class="section">
+      <div class="section-title">1. Datos del Informe</div>
+      <div class="section-content">
+        <div class="grid-2">
+          <div class="field-row">
+            <span class="field-label">Número de Informe:</span>
+            <span class="field-value"><%= inspection.datosInforme?.numeroInforme || certificate.numCert || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Tipo de Inspección:</span>
+            <span class="field-value"><%= inspection.datosInforme?.tipoInspeccion || certificate.tipoInspeccion || '—' %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Fecha de Inspección:</span>
+            <span class="field-value"><%= formatDate(inspection.datosInforme?.fechaInspeccion) %></span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Fecha de Expedición:</span>
+            <span class="field-value"><%= formatDate(inspection.datosInforme?.fechaExpedicion || inspection.datosInforme?.fechaInspeccion) %></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Datos del Cliente -->
     <div class="section">
-      <div class="section-title">1. Datos del Cliente</div>
+      <div class="section-title">2. Datos del Cliente</div>
       <div class="section-content">
         <div class="grid-2">
           <div class="field-row">
@@ -331,7 +388,7 @@
 
     <!-- Información del Ítem -->
     <div class="section">
-      <div class="section-title">2. Información del Ítem Inspeccionado</div>
+      <div class="section-title">3. Información del Ítem Inspeccionado</div>
       <div class="section-content">
         <div class="grid-2">
           <div class="field-row">
@@ -397,12 +454,13 @@
             <span class="field-value"><%= inspection.informacionItem?.direccion || '—' %></span>
           </div>
         </div>
+
       </div>
     </div>
 
     <!-- Ítems a Evaluar -->
     <div class="section">
-      <div class="section-title">3. Ítems Evaluados</div>
+      <div class="section-title">4. Ítems Evaluados</div>
       <div class="section-content">
         <table>
           <thead>
@@ -435,11 +493,7 @@
   <!-- Segunda página -->
   <div class="page">
     <div class="header">
-      <div class="header-logo">
-        <div style="width: 80px; height: 40px; background: #0B3A84; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14pt;">
-          FARES
-        </div>
-      </div>
+      <div class="header-logo-empty"></div>
       <div class="header-title">
         <h1>Informe de Inspección</h1>
         <h2>Continuación - Informe No. <%= certificate.numCert || '—' %></h2>
@@ -451,7 +505,7 @@
 
     <!-- Equipos Utilizados -->
     <div class="section">
-      <div class="section-title">4. Equipos Utilizados</div>
+      <div class="section-title">5. Equipos Utilizados</div>
       <div class="section-content">
         <table>
           <thead>
@@ -479,7 +533,7 @@
 
     <!-- Reporte de Evaluación -->
     <div class="section">
-      <div class="section-title">5. Reporte de Evaluación</div>
+      <div class="section-title">6. Reporte de Evaluación</div>
       <div class="section-content">
         <% const reporte = inspection.reporteEvaluacion || {}; %>
         
@@ -504,31 +558,10 @@
         </div>
         <% } %>
 
-        <% if (reporte.hermeticidad) { %>
-        <div class="mb-10">
-          <strong>Hermeticidad:</strong>
-          <div class="text-content"><%= reporte.hermeticidad %></div>
-        </div>
-        <% } %>
-
         <% if (reporte.tuberiasConexiones) { %>
         <div class="mb-10">
           <strong>Tuberías y Conexiones:</strong>
           <div class="text-content"><%= reporte.tuberiasConexiones %></div>
-        </div>
-        <% } %>
-
-        <% if (reporte.medicionEspesores) { %>
-        <div class="mb-10">
-          <strong>Medición de Espesores:</strong>
-          <div class="text-content"><%= reporte.medicionEspesores %></div>
-        </div>
-        <% } %>
-
-        <% if (reporte.pruebaHidrostatica) { %>
-        <div class="mb-10">
-          <strong>Prueba Hidrostática:</strong>
-          <div class="text-content"><%= reporte.pruebaHidrostatica %></div>
         </div>
         <% } %>
 
@@ -555,9 +588,52 @@
       </div>
     </div>
 
+    <!-- Conexiones y Accesorios -->
+    <div class="section">
+      <div class="section-title">7. Conexiones y Accesorios</div>
+      <div class="section-content">
+        <% const conexiones = inspection.conexionesAccesorios || {}; %>
+
+        <div class="mb-10"><strong>Accesorios Inspeccionados</strong></div>
+        <% if (Array.isArray(conexiones.accesorios) && conexiones.accesorios.length > 0) { %>
+        <table>
+          <thead>
+            <tr>
+              <th>Ítem</th>
+              <th>Fabricante</th>
+              <th>Conexión (medida)</th>
+              <th>Serie/Modelo</th>
+              <th>Fecha</th>
+              <th>Estado</th>
+              <th>Criterio</th>
+              <th>C/NC</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% conexiones.accesorios.forEach((acc) => { %>
+            <tr>
+              <td><%= acc.item || '—' %></td>
+              <td><%= acc.fabricante || '—' %></td>
+              <td><%= acc.conexion || '—' %></td>
+              <td><%= acc.serieMod || '—' %></td>
+              <td><%= formatDate(acc.fecha) %></td>
+              <td><%= acc.estado?.descripcion || '—' %></td>
+              <td><%= acc.criterio || '—' %></td>
+              <td class="text-center"><%= acc.estado?.cumple === true ? 'C' : acc.estado?.cumple === false ? 'NC' : '—' %></td>
+            </tr>
+            <% }); %>
+          </tbody>
+        </table>
+        <% } else { %>
+        <div class="text-content">Sin accesorios registrados.</div>
+        <% } %>
+
+      </div>
+    </div>
+
     <!-- Resolución Aplicada -->
     <div class="section">
-      <div class="section-title">6. Marco Normativo</div>
+      <div class="section-title">8. Marco Normativo</div>
       <div class="section-content">
         <div class="field-row">
           <span class="field-label">Resolución Aplicada:</span>
@@ -566,6 +642,23 @@
         <div class="field-row">
           <span class="field-label">Artículos:</span>
           <span class="field-value"><%= inspection.articulos || '—' %></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notas y políticas -->
+    <div class="section">
+      <div class="section-title">9. Notas del Informe</div>
+      <div class="section-content">
+        <div class="text-content">
+El resultado del informe se refiere al momento y condiciones observadas durante la inspección.
+
+En caso de cumplimiento, el certificado de inspección se emite y publica en la plataforma FARES dentro del plazo operativo establecido.
+
+Recursos, quejas o apelaciones:
+- Línea telefónica: 9387019 - 3014710771
+- Correo: admin@faresbcs.com
+- Comunicación escrita y formato de quejas/apelaciones disponible en FARES.
         </div>
       </div>
     </div>
@@ -591,11 +684,7 @@
   <% if (photos && photos.length > 0) { %>
   <div class="page">
     <div class="header">
-      <div class="header-logo">
-        <div style="width: 80px; height: 40px; background: #0B3A84; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14pt;">
-          FARES
-        </div>
-      </div>
+      <div class="header-logo-empty"></div>
       <div class="header-title">
         <h1>Registro Fotográfico</h1>
         <h2>Informe No. <%= certificate.numCert || '—' %></h2>

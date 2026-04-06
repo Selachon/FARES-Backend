@@ -125,7 +125,7 @@ export const LABELS_EQUIPOS = {
   detectorFugas: 'Detector de Fugas',
   explosimetro: 'Explosímetro',
   medidorProfundidad: 'Medidor de Profundidad',
-  medidorAltura: 'Medidor de Altura',
+  medidorAltura: 'Galga',
   pieRey: 'Pie de Rey',
   cintaMetrica: 'Cinta Métrica',
   multimetro: 'Multímetro',
@@ -165,7 +165,7 @@ export const DEFAULT_EQUIPOS = {
   detectorFugas: '',
   explosimetro: '',
   medidorProfundidad: '',
-  medidorAltura: 'N/A',
+  medidorAltura: '',
   pieRey: '',
   cintaMetrica: '',
   multimetro: 'N/A',
@@ -187,9 +187,9 @@ export const DEFAULT_REPORTE_EVALUACION = {
   inspeccionVisualAccesorios: '',
   hermeticidad: '',
   tuberiasConexiones: '',
-  medicionEspesores: '',
   pruebaHidrostatica: '',
   revisionInterna: '',
+  medicionEspesores: '',
   proteccionCatodica: '',
   observacionesRecomendaciones: '',
 };
@@ -202,6 +202,7 @@ export function createEmptyInspeccionCompleta() {
       numeroInforme: '',
       tipoInspeccion: 'PARCIAL',
       fechaInspeccion: new Date().toISOString(),
+      fechaExpedicion: new Date().toISOString(),
     },
     datosCliente: {
       cliente: '',
@@ -219,9 +220,13 @@ export function createEmptyInspeccionCompleta() {
       tipoInstalacion: 'ESTACIONARIO',
       clasificacion: '',
       espesorCuerpo: '',
+      unidadEspesorCuerpo: 'MM',
       espesorCabeza: '',
+      unidadEspesorCabeza: 'MM',
       presionOperacion: '',
+      unidadPresionOperacion: 'PSI',
       presionDisenio: '',
+      unidadPresionDisenio: 'PSI',
       claseUso: '',
       ubicacion: '',
       nombreUbicacion: '',
@@ -298,6 +303,8 @@ export function normalizeInspeccionCompleta(data) {
   if (!data) return null;
 
   const empty = createEmptyInspeccionCompleta();
+  const rawInformacionItem = data.informacionItem || {};
+  const { diagramaItem: _legacyDiagramaItem, ...informacionItemSinDiagrama } = rawInformacionItem;
 
   return {
     datosInforme: {
@@ -310,7 +317,7 @@ export function normalizeInspeccionCompleta(data) {
     },
     informacionItem: {
       ...empty.informacionItem,
-      ...(data.informacionItem || {}),
+      ...informacionItemSinDiagrama,
     },
     itemsEvaluar: {
       ...empty.itemsEvaluar,

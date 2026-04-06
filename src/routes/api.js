@@ -91,6 +91,12 @@ const safeEqualSecret = (plainTextSecret, storedHash) => {
   return crypto.timingSafeEqual(a, b);
 };
 
+const normalizeInspectorName = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 120);
+
 const appDevicesCollection = async () => {
   const db = await connect();
   const col = db.collection("app_devices");
@@ -1040,6 +1046,7 @@ router.post(
     );
     const expiresIn = req.body?.expiresIn || config.security.enrollmentTokenExpiresIn;
     const label = String(req.body?.label || "").trim().slice(0, 100) || null;
+    const inspectorName = normalizeInspectorName(req.body?.inspectorName || label);
 
     const tokenId = crypto.randomBytes(16).toString("hex");
     const token = jwt.sign(
@@ -1055,6 +1062,7 @@ router.post(
     await tokens.insertOne({
       tokenId,
       label,
+      inspectorName: inspectorName || "",
       maxDevices,
       usedDevices: 0,
       deviceIds: [],
@@ -1068,6 +1076,7 @@ router.post(
       maxDevices,
       createdBy: req.user.username,
       label,
+      inspectorName: inspectorName || "",
     });
 
     res.status(201).json({
@@ -1075,6 +1084,7 @@ router.post(
       tokenId,
       maxDevices,
       expiresAt: expiresAt?.toISOString() || null,
+      inspectorName: inspectorName || null,
     });
   }),
 );
@@ -1096,6 +1106,7 @@ router.get(
     res.json(list.map(t => ({
       tokenId: t.tokenId,
       label: t.label,
+      inspectorName: t.inspectorName || "",
       maxDevices: t.maxDevices,
       usedDevices: t.usedDevices,
       createdBy: t.createdBy,
@@ -1132,6 +1143,86 @@ router.delete(
   }),
 );
 
+/**
+ * Admin endpoint to list enrolled app devices.
+ */
+router.get(
+  "/app/auth/devices",
+  adminGuard,
+  asyncHandler(async (_req, res) => {
+    const devices = await appDevicesCollection();
+    const list = await devices
+      .find({}, { projection: { _id: 0, secretHash: 0 } })
+      .sort({ lastSeenAt: -1, createdAt: -1 })
+      .limit(500)
+      .toArray();
+
+    res.json(
+      list.map((d) => ({
+        deviceId: d.deviceId,
+        inspectorName: String(d.inspectorName || "").trim() || null,
+        status: d.status || "active",
+        platform: d.platform || "unknown",
+        appVersion: d.appVersion || "",
+        createdAt: d.createdAt || null,
+        lastSeenAt: d.lastSeenAt || null,
+      })),
+    );
+  }),
+);
+
+/**
+ * Admin endpoint to assign/change inspector for a device.
+ */
+router.put(
+  "/app/auth/devices/:deviceId/inspector",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const deviceId = String(req.params?.deviceId || "").trim().slice(0, 128);
+    const inspectorName = normalizeInspectorName(req.body?.inspectorName);
+
+    if (!deviceId || deviceId.length < 8) {
+      return res.status(400).json({
+        message: "deviceId inválido",
+        code: "BAD_REQUEST",
+      });
+    }
+
+    if (!inspectorName) {
+      return res.status(400).json({
+        message: "inspectorName es requerido",
+        code: "MISSING_INSPECTOR_NAME",
+      });
+    }
+
+    const devices = await appDevicesCollection();
+    const result = await devices.updateOne(
+      { deviceId },
+      {
+        $set: {
+          inspectorName,
+          updatedAt: new Date(),
+        },
+      },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({
+        message: "Dispositivo no encontrado",
+        code: "DEVICE_NOT_FOUND",
+      });
+    }
+
+    logger.info("Device inspector updated", {
+      deviceId,
+      inspectorName,
+      updatedBy: req.user.username,
+    });
+
+    res.json({ ok: true, deviceId, inspectorName });
+  }),
+);
+
 router.post(
   "/app/auth/device-register",
   appAuthLimiter,
@@ -1140,6 +1231,7 @@ router.post(
     const platformRaw = String(req.body?.platform || "unknown").trim().toLowerCase();
     const appVersionRaw = String(req.body?.appVersion || "").trim();
     const enrollmentToken = String(req.body?.enrollmentToken || "").trim();
+    const inspectorNameInput = normalizeInspectorName(req.body?.inspectorName);
 
     const deviceId = deviceIdRaw.slice(0, 128);
     const appVersion = appVersionRaw.slice(0, 32);
@@ -1191,6 +1283,7 @@ router.post(
             platform,
             appVersion,
             lastSeenAt: new Date(),
+            ...(inspectorNameInput ? { inspectorName: inspectorNameInput } : {}),
           },
         },
       );
@@ -1277,6 +1370,10 @@ router.post(
           status: "active",
           platform,
           appVersion,
+          inspectorName:
+            normalizeInspectorName(updateResult?.inspectorName || updateResult?.label) ||
+            inspectorNameInput ||
+            "",
           createdAt: new Date(),
           lastSeenAt: new Date(),
         });
@@ -1312,6 +1409,7 @@ router.post(
       status: "active",
       platform,
       appVersion,
+      inspectorName: inspectorNameInput || "",
       createdAt: new Date(),
       lastSeenAt: new Date(),
     });
@@ -1392,6 +1490,7 @@ router.post(
         deviceId,
         platform,
         appVersion,
+        inspector: String(device.inspectorName || "").trim() || undefined,
       },
       config.security.appJwtSecret,
       {
@@ -1406,7 +1505,7 @@ router.post(
       ? new Date(decoded.exp * 1000).toISOString()
       : null;
 
-    res.json({ token, expiresAt });
+    res.json({ token, expiresAt, inspector: String(device.inspectorName || "").trim() || null });
   }),
 );
 
@@ -1494,6 +1593,48 @@ router.post(
     // Keep disabled until the mobile payload fully covers validated inputs.
     const ENABLE_AUTO_PDF = false;
 
+    const deviceInspector = String(req.appClient?.inspector || "").trim();
+    const fallbackInspector = req.appClient?.deviceId
+      ? `DISPOSITIVO ${String(req.appClient.deviceId).slice(0, 18)}`
+      : "";
+    inspectionData.inspector = deviceInspector || fallbackInspector || inspectionData.inspector || "";
+    inspectionData.directorTecnico = "";
+
+    const hasValidNumCert = Number.isFinite(Number(draftData.numCert)) && Number(draftData.numCert) > 0;
+    if (!hasValidNumCert) {
+      const db = await connect();
+      const localId = String(draftData.localId || "").trim();
+      let existingNumCert = null;
+
+      if (localId) {
+        const existingDraft = await db.collection("drafts").findOne(
+          { localId },
+          { projection: { _id: 0, numCert: 1 } },
+        );
+        const parsedExistingNumCert = Number(existingDraft?.numCert);
+        if (Number.isFinite(parsedExistingNumCert) && parsedExistingNumCert > 0) {
+          existingNumCert = parsedExistingNumCert;
+        }
+      }
+
+      draftData.numCert =
+        existingNumCert ||
+        (await draftService.getNextDraftNumber(db));
+    } else {
+      draftData.numCert = Number(draftData.numCert);
+    }
+
+    let draftStorage = null;
+    try {
+      draftStorage = await driveService.ensureCertificateFolderTree(draftData.numCert);
+    } catch (error) {
+      logger.warn("Could not ensure draft drive tree before app sync", {
+        numCert: draftData.numCert,
+        error: error.message,
+      });
+    }
+    let photoSectionFolders = { ...(draftStorage?.sectionFolders || {}) };
+
     // 1) Fill Excel template.
     logger.info("Step 1: Filling Excel template", { serial: draftData.serial });
     const workbook = await excelService.fillTemplate(inspectionData);
@@ -1546,6 +1687,7 @@ router.post(
         dbFolders.INF ||
         config.google.drive.folders.INF ||
         config.google.drive.parentFolderId;
+      const excelTargetFolder = draftStorage?.rootFolderId || informesFolder;
 
       const excelUploadResult = await driveService.uploadFile({
         localPath: excelPath,
@@ -1556,11 +1698,11 @@ router.post(
           NumCert: String(numCertForName),
           Serial: String(serialForName),
         },
-        folderId: informesFolder,
+        folderId: excelTargetFolder,
       });
 
       logger.info("Step 3 complete: Excel uploaded to Drive", {
-        folder: "INF",
+        folder: draftStorage?.rootFolderId ? "CERT_ROOT" : "INF",
         fileName: excelFileName,
         link: excelUploadResult?.webViewLink,
       });
@@ -1569,11 +1711,10 @@ router.post(
       logger.info("Step 4: Processing photos for Drive upload");
       const processedPhotos = [];
       
-      if (Array.isArray(inspectionData?.fotos) && photoFiles.length > 0) {
-        const dbFoldersForPhotos = await driveService.getDriveFolders();
-        // Crear carpeta de fotos específica para este draft si no existe
-        // Por ahora subimos a la carpeta general, se moverán cuando se publique
-        
+      if (Array.isArray(inspectionData?.fotos)) {
+        const dbFoldersForPhotos =
+          photoFiles.length > 0 ? await driveService.getDriveFolders() : null;
+
         for (const photo of inspectionData.fotos) {
           if (!photo?.uploadedPath) {
             // Foto sin archivo subido, mantener metadata
@@ -1582,7 +1723,7 @@ router.post(
               category: photo.category || 'superficie',
               description: photo.description || '',
               timestamp: photo.timestamp || new Date().toISOString(),
-              includeInPdf: true,
+              includeInPdf: photo.includeInPdf !== false,
               driveFileId: null,
               driveUrl: null,
             });
@@ -1590,6 +1731,40 @@ router.post(
           }
 
           try {
+            const categoryKey = String(photo.category || 'otros');
+            let photoTargetFolder =
+              dbFoldersForPhotos?.INF || config.google.drive.parentFolderId;
+
+            if (draftStorage?.registrosFotograficosFolderId) {
+              let sectionFolderId = photoSectionFolders[categoryKey] || null;
+              if (!sectionFolderId) {
+                try {
+                  const sectionName = draftService.getPhotoSectionFolderName(categoryKey);
+                  const sectionFolder = await driveService.ensurePhotoSectionFolder(
+                    draftStorage.registrosFotograficosFolderId,
+                    sectionName,
+                  );
+                  sectionFolderId = sectionFolder?.id || null;
+                  if (sectionFolderId) {
+                    photoSectionFolders = {
+                      ...photoSectionFolders,
+                      [categoryKey]: sectionFolderId,
+                    };
+                  }
+                } catch (sectionErr) {
+                  logger.warn('Could not ensure section folder for photo upload', {
+                    category: categoryKey,
+                    numCert: numCertForName,
+                    error: sectionErr.message,
+                  });
+                }
+              }
+
+              if (sectionFolderId) {
+                photoTargetFolder = sectionFolderId;
+              }
+            }
+
             // Subir foto a Drive
             const photoFileName = `FOTO_${serialForName}_${photo.category || 'foto'}_${Date.now()}.jpg`;
             const photoUploadResult = await driveService.uploadFile({
@@ -1601,7 +1776,7 @@ router.post(
                 Serial: String(serialForName),
                 Category: photo.category || 'general',
               },
-              folderId: dbFoldersForPhotos.INF || config.google.drive.parentFolderId,
+              folderId: photoTargetFolder,
             });
 
             processedPhotos.push({
@@ -1609,7 +1784,7 @@ router.post(
               category: photo.category || 'superficie',
               description: photo.description || '',
               timestamp: photo.timestamp || new Date().toISOString(),
-              includeInPdf: true,
+              includeInPdf: photo.includeInPdf !== false,
               driveFileId: photoUploadResult?.id || null,
               driveUrl: photoUploadResult?.webViewLink || null,
               thumbnailUrl: photoUploadResult?.thumbnailLink || null,
@@ -1630,7 +1805,7 @@ router.post(
               category: photo.category || 'superficie',
               description: photo.description || '',
               timestamp: photo.timestamp || new Date().toISOString(),
-              includeInPdf: true,
+              includeInPdf: photo.includeInPdf !== false,
               driveFileId: null,
               driveUrl: null,
             });
@@ -1655,10 +1830,21 @@ router.post(
         }];
       }
 
+      if (draftStorage) {
+        draftStorage = {
+          ...draftStorage,
+          sectionFolders: photoSectionFolders,
+        };
+        draftData.storage = draftStorage;
+      }
+
       // Persist uploaded Excel URL as legacy `formatos` link.
       draftData.links = {
         ...(draftData.links || {}),
         formatos: excelUploadResult?.webViewLink || '#',
+        ...(draftStorage?.rootFolderLink
+          ? { driveFolder: draftStorage.rootFolderLink }
+          : {}),
       };
 
       // NUEVO: Pasar la inspección completa y las fotos procesadas al draft
@@ -1726,7 +1912,7 @@ router.get(
   "/app/companies",
   appGuard,
   asyncHandler(async (_req, res) => {
-    const companies = await companyService.getAllCompanies();
+    const companies = await companyService.getAllCompanyProfiles();
     res.json(companies);
   }),
 );
@@ -1783,6 +1969,15 @@ router.get(
   asyncHandler(async (_req, res) => {
     const companies = await companyService.getAllCompanies();
     res.json(companies);
+  }),
+);
+
+router.get(
+  "/admin/companies/:name/profile",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const profile = await companyService.getCompanyProfile(req.params.name);
+    res.json(profile);
   }),
 );
 

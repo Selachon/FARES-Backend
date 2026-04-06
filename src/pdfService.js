@@ -16,13 +16,31 @@ import {
   LABELS_EQUIPOS,
 } from "./inspectionTypes.js";
 
+const EXCLUDED_PDF_PHOTO_CATEGORIES = new Set([
+  "hermeticidad",
+  "prueba_hidrostatica",
+  "medicion_espesores",
+]);
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 class PdfService {
   constructor() {
     this.templatePath = path.join(__dirname, "templates", "inspection-report.ejs");
+    this.faresLogoPath = path.join(__dirname, "templates", "assets", "fares-logo.png");
+    this.onacLogoPath = path.join(__dirname, "templates", "assets", "onac-logo.png");
     this.browser = null;
+  }
+
+  getImageDataUri(imagePath, mimeType = "image/png") {
+    try {
+      if (!fs.existsSync(imagePath)) return null;
+      const base64 = fs.readFileSync(imagePath).toString("base64");
+      return `data:${mimeType};base64,${base64}`;
+    } catch (_) {
+      return null;
+    }
   }
 
   /**
@@ -65,6 +83,8 @@ class PdfService {
       PHOTO_CATEGORY_LABELS,
       LABELS_ITEMS_EVALUAR,
       LABELS_EQUIPOS,
+      faresLogo: this.getImageDataUri(this.faresLogoPath),
+      onacLogo: this.getImageDataUri(this.onacLogoPath),
       formatDate: (dateStr) => {
         if (!dateStr) return "—";
         const date = new Date(dateStr);
@@ -107,6 +127,10 @@ class PdfService {
         // Por defecto incluir solo las marcadas
         photosToInclude = photosToInclude.filter((p) => p.includeInPdf !== false);
       }
+
+      photosToInclude = photosToInclude.filter(
+        (p) => !EXCLUDED_PDF_PHOTO_CATEGORIES.has(String(p.category || "")),
+      );
 
       // Agrupar fotos por categoría
       const photosByCategory = {};

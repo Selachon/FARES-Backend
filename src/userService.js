@@ -7,6 +7,18 @@ import { cacheService } from "./cacheService.js";
 import { performanceMonitor } from "./performanceMonitor.js";
 import { companyService } from "./companyService.js";
 
+// Hash válido para comparación dummy y mitigación de timing attacks.
+const DUMMY_PASSWORD_HASH =
+  "$2b$10$an3fzJ3IQLVvXGSRW2.daeQkgB4U2hn5ALQCoXl4Scg7DmKK8VziK";
+
+async function runDummyPasswordCompare(password) {
+  try {
+    await bcrypt.compare(String(password || ""), DUMMY_PASSWORD_HASH);
+  } catch (_) {
+    // Nunca bloquear login por fallo del compare dummy.
+  }
+}
+
 class UserService {
   constructor() {
     this.collectionName = "users";
@@ -63,7 +75,7 @@ class UserService {
 
       if (!user) {
         // Ejecutar bcrypt compare con hash dummy para prevenir timing attack
-        await bcrypt.compare(password, "$2b$10$dummyhashtopreventtimingattack1234567890");
+        await runDummyPasswordCompare(password);
         throw genericError;
       }
 
@@ -74,7 +86,7 @@ class UserService {
           empresa: user.empresa,
         });
         // Ejecutar bcrypt compare con hash dummy
-        await bcrypt.compare(password, "$2b$10$dummyhashtopreventtimingattack1234567890");
+        await runDummyPasswordCompare(password);
         throw genericError;
       }
 
