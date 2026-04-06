@@ -1710,6 +1710,8 @@ router.post(
       // 4) Upload photos to Drive and prepare photo metadata
       logger.info("Step 4: Processing photos for Drive upload");
       const processedPhotos = [];
+      let photoUploadError = null;
+      const uploadedPhotoFileIds = [];
       
       if (Array.isArray(inspectionData?.fotos)) {
         const dbFoldersForPhotos =
@@ -1717,17 +1719,12 @@ router.post(
 
         for (const photo of inspectionData.fotos) {
           if (!photo?.uploadedPath) {
-            // Foto sin archivo subido, mantener metadata
-            processedPhotos.push({
-              id: photo.id || `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            photoUploadError = {
+              code: 'PHOTO_FILE_MISSING',
               category: photo.category || 'superficie',
-              description: photo.description || '',
-              timestamp: photo.timestamp || new Date().toISOString(),
-              includeInPdf: photo.includeInPdf !== false,
-              driveFileId: null,
-              driveUrl: null,
-            });
-            continue;
+              message: 'El archivo local de la foto no llegó al backend',
+            };
+            break;
           }
 
           try {
@@ -1790,6 +1787,10 @@ router.post(
               thumbnailUrl: photoUploadResult?.thumbnailLink || null,
             });
 
+            if (photoUploadResult?.id) {
+              uploadedPhotoFileIds.push(photoUploadResult.id);
+            }
+
             logger.info("Photo uploaded to Drive", {
               category: photo.category,
               fileId: photoUploadResult?.id,
@@ -1799,18 +1800,35 @@ router.post(
               category: photo.category,
               error: photoErr.message,
             });
-            // Mantener la foto sin URL de Drive
-            processedPhotos.push({
-              id: photo.id || `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            photoUploadError = {
+              code: 'PHOTO_UPLOAD_FAILED',
               category: photo.category || 'superficie',
-              description: photo.description || '',
-              timestamp: photo.timestamp || new Date().toISOString(),
-              includeInPdf: photo.includeInPdf !== false,
-              driveFileId: null,
-              driveUrl: null,
-            });
+              message: photoErr.message,
+            };
+            break;
           }
         }
+      }
+
+      if (photoUploadError) {
+        if (uploadedPhotoFileIds.length > 0) {
+          for (const fileId of uploadedPhotoFileIds) {
+            try {
+              await driveService.deleteFile(fileId);
+            } catch (cleanupErr) {
+              logger.warn('Could not clean up partially uploaded photo', {
+                fileId,
+                error: cleanupErr.message,
+              });
+            }
+          }
+        }
+
+        return res.status(502).json({
+          message: 'Error cargando fotos a Drive. Reintente sincronizar.',
+          code: 'PHOTO_UPLOAD_FAILED',
+          detail: photoUploadError,
+        });
       }
 
       logger.info("Step 4 complete: Photos processed", { 
