@@ -33,6 +33,31 @@ class PdfService {
     this.browser = null;
   }
 
+  normalizeSelectedSections(selectedSections) {
+    const defaults = {
+      datosInforme: true,
+      datosCliente: true,
+      informacionItem: true,
+      itemsEvaluar: true,
+      equiposUtilizados: true,
+      reporteEvaluacion: true,
+      conexionesAccesorios: true,
+      firmas: true,
+      fotos: true,
+    };
+
+    if (!selectedSections || typeof selectedSections !== "object") {
+      return defaults;
+    }
+
+    return {
+      ...defaults,
+      ...Object.fromEntries(
+        Object.entries(selectedSections).map(([key, value]) => [key, value !== false]),
+      ),
+    };
+  }
+
   getImageDataUri(imagePath, mimeType = "image/png") {
     try {
       if (!fs.existsSync(imagePath)) return null;
@@ -109,7 +134,7 @@ class PdfService {
    * @param {Array} selectedPhotoIds - IDs de fotos a incluir (null = todas con includeInPdf)
    * @returns {Promise<Buffer>} - Buffer del PDF generado
    */
-  async generatePdf(certificate, selectedPhotoIds = null) {
+  async generatePdf(certificate, selectedPhotoIds = null, selectedSections = null) {
     const startTime = Date.now();
     logger.info("Starting PDF generation", {
       certId: certificate.id,
@@ -117,9 +142,13 @@ class PdfService {
     });
 
     try {
+      const includeSections = this.normalizeSelectedSections(selectedSections);
+
       // Filtrar fotos según selección
       let photosToInclude = certificate.fotos || [];
-      if (selectedPhotoIds && Array.isArray(selectedPhotoIds)) {
+      if (includeSections.fotos === false) {
+        photosToInclude = [];
+      } else if (selectedPhotoIds && Array.isArray(selectedPhotoIds)) {
         photosToInclude = photosToInclude.filter((p) =>
           selectedPhotoIds.includes(p.id)
         );
@@ -146,6 +175,7 @@ class PdfService {
       const html = await this.renderTemplate({
         certificate,
         inspection: certificate.inspeccionCompleta || {},
+        includeSections,
         photos: photosToInclude,
         photosByCategory,
         generatedAt: new Date().toISOString(),
@@ -195,8 +225,12 @@ class PdfService {
    * @param {Array} selectedPhotoIds - IDs de fotos a incluir
    * @returns {Promise<Object>} - { pdfUrl, pdfFileId }
    */
-  async generateAndUploadPdf(certificate, selectedPhotoIds = null) {
-    const pdfBuffer = await this.generatePdf(certificate, selectedPhotoIds);
+  async generateAndUploadPdf(certificate, selectedPhotoIds = null, selectedSections = null) {
+    const pdfBuffer = await this.generatePdf(
+      certificate,
+      selectedPhotoIds,
+      selectedSections,
+    );
 
     // Guardar temporalmente
     const tempDir = path.join(__dirname, "..", "uploads");

@@ -175,6 +175,7 @@ class CertificateService {
         resultado = "CUMPLE",
         tipoEquipo,
         tipoInspeccion,
+        createdBy,
       } = certificateData;
 
       const db = await connect();
@@ -236,6 +237,7 @@ class CertificateService {
         status: "ACTIVO",
         renewedAt: null,
         links,
+        createdBy: sanitizeString(createdBy || "") || null,
         // Guardar storage de Drive para futuras operaciones
         storage: storage || null,
         createdAt: new Date()
@@ -579,6 +581,7 @@ class CertificateService {
       assignedUsers: certificate.assignedUsers,
       tipoEquipo: certificate.tipoEquipo || null,
       tipoInspeccion: certificate.tipoInspeccion || null,
+      createdBy: sanitizeString(certificate.createdBy || "") || null,
 
       
       status: exp?.computedStatus || certificate.status || "ACTIVO",

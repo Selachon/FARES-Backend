@@ -364,6 +364,13 @@ class DriveService {
     return null;
   }
 
+  // Stable thumbnail URL (avoids expiring Drive API thumbnailLink tokens).
+  getThumbnailUrl(fileId, size = "w1200") {
+    const safeId = String(fileId || "").trim();
+    if (!safeId) return null;
+    return `https://drive.google.com/thumbnail?id=${encodeURIComponent(safeId)}&sz=${encodeURIComponent(size)}`;
+  }
+
   
   async downloadFileStream(fileId) {
     if (!fileId) throw new Error("fileId requerido");

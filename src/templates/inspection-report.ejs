@@ -323,6 +323,7 @@
     </div>
 
     <!-- Resultado -->
+    <% const sectionFlags = includeSections || {}; %>
     <div class="section text-center mb-10">
       <% 
         const resultado = certificate.resultado || inspection.resultado || 'SIN CONCEPTO';
@@ -333,6 +334,7 @@
     </div>
 
     <!-- Datos del Informe -->
+    <% if (sectionFlags.datosInforme !== false) { %>
     <div class="section">
       <div class="section-title">1. Datos del Informe</div>
       <div class="section-content">
@@ -356,8 +358,10 @@
         </div>
       </div>
     </div>
+    <% } %>
 
     <!-- Datos del Cliente -->
+    <% if (sectionFlags.datosCliente !== false) { %>
     <div class="section">
       <div class="section-title">2. Datos del Cliente</div>
       <div class="section-content">
@@ -385,8 +389,10 @@
         </div>
       </div>
     </div>
+    <% } %>
 
     <!-- Información del Ítem -->
+    <% if (sectionFlags.informacionItem !== false) { %>
     <div class="section">
       <div class="section-title">3. Información del Ítem Inspeccionado</div>
       <div class="section-content">
@@ -457,8 +463,10 @@
 
       </div>
     </div>
+    <% } %>
 
     <!-- Ítems a Evaluar -->
+    <% if (sectionFlags.itemsEvaluar !== false) { %>
     <div class="section">
       <div class="section-title">4. Ítems Evaluados</div>
       <div class="section-content">
@@ -488,6 +496,7 @@
         </table>
       </div>
     </div>
+    <% } %>
   </div>
 
   <!-- Segunda página -->
@@ -504,6 +513,7 @@
     </div>
 
     <!-- Equipos Utilizados -->
+    <% if (sectionFlags.equiposUtilizados !== false) { %>
     <div class="section">
       <div class="section-title">5. Equipos Utilizados</div>
       <div class="section-content">
@@ -530,8 +540,10 @@
         </table>
       </div>
     </div>
+    <% } %>
 
     <!-- Reporte de Evaluación -->
+    <% if (sectionFlags.reporteEvaluacion !== false) { %>
     <div class="section">
       <div class="section-title">6. Reporte de Evaluación</div>
       <div class="section-content">
@@ -587,8 +599,10 @@
         <% } %>
       </div>
     </div>
+    <% } %>
 
     <!-- Conexiones y Accesorios -->
+    <% if (sectionFlags.conexionesAccesorios !== false) { %>
     <div class="section">
       <div class="section-title">7. Conexiones y Accesorios</div>
       <div class="section-content">
@@ -630,8 +644,10 @@
 
       </div>
     </div>
+    <% } %>
 
     <!-- Resolución Aplicada -->
+    <% if (sectionFlags.firmas !== false) { %>
     <div class="section">
       <div class="section-title">8. Marco Normativo</div>
       <div class="section-content">
@@ -645,6 +661,7 @@
         </div>
       </div>
     </div>
+    <% } %>
 
     <!-- Notas y políticas -->
     <div class="section">
@@ -664,6 +681,7 @@ Recursos, quejas o apelaciones:
     </div>
 
     <!-- Firmas -->
+    <% if (sectionFlags.firmas !== false) { %>
     <div class="signatures">
       <div class="signature-block">
         <div class="signature-line">
@@ -678,10 +696,11 @@ Recursos, quejas o apelaciones:
         </div>
       </div>
     </div>
+    <% } %>
   </div>
 
   <!-- Página de fotos (si hay fotos) -->
-  <% if (photos && photos.length > 0) { %>
+  <% if (sectionFlags.fotos !== false && photos && photos.length > 0) { %>
   <div class="page">
     <div class="header">
       <div class="header-logo-empty"></div>
