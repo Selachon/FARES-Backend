@@ -1621,8 +1621,9 @@ router.post(
       logger.warn('Inventory site creation failed', { error: error.message });
     }
 
-    // Feature flag for automatic PDF generation from the workbook.
-    // Keep disabled until the mobile payload fully covers validated inputs.
+    // Feature flags for workbook-based outputs.
+    // Keep disabled: we no longer generate/upload Excel as `formatos`.
+    const ENABLE_EXCEL_FORMAT_UPLOAD = false;
     const ENABLE_AUTO_PDF = false;
 
     const deviceInspector = String(req.appClient?.inspector || "").trim();
@@ -1667,12 +1668,7 @@ router.post(
     }
     let photoSectionFolders = { ...(draftStorage?.sectionFolders || {}) };
 
-    // 1) Fill Excel template.
-    logger.info("Step 1: Filling Excel template", { serial: draftData.serial });
-    const workbook = await excelService.fillTemplate(inspectionData);
-    logger.info("Step 1 complete: Excel template filled");
-
-    // 2) Prepare temporary files.
+    // Prepare temporary files.
     const tempDir = path.join(__dirname, '..', 'uploads');
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
@@ -1687,57 +1683,63 @@ router.post(
     const excelFileName = `${empresaForName}_${numCertForName}_${serialForName}_${timestamp}.xlsx`;
 
     let draft;
+    let excelUploadResult = null;
     try {
-      logger.info("Step 2: Saving main Excel workbook");
-      await excelService.saveWorkbook(workbook, excelPath);
-      logger.info("Step 2 complete: Excel saved", { excelPath });
+      if (ENABLE_EXCEL_FORMAT_UPLOAD) {
+        logger.info("Step 1: Filling Excel template", { serial: draftData.serial });
+        const workbook = await excelService.fillTemplate(inspectionData);
+        logger.info("Step 1 complete: Excel template filled");
 
-      // Optional PDF path, intentionally disabled for current operations.
-      if (ENABLE_AUTO_PDF) {
-        logger.info("Step 3: Cloning workbook for PDF");
-        const pdfWorkbook = await excelService.cloneWorkbook(workbook);
-        // Exclude categories that should not appear in the PDF report.
-        excelService.insertPhotoRecords(pdfWorkbook, inspectionData.fotos || [], {
-          excludeCategories: ['revision_interna', 'prueba_hidrostatica', 'medicion_espesores', 'proteccion_catodica'],
+        logger.info("Step 2: Saving main Excel workbook");
+        await excelService.saveWorkbook(workbook, excelPath);
+        logger.info("Step 2 complete: Excel saved", { excelPath });
+
+        // Optional PDF path, intentionally disabled for current operations.
+        if (ENABLE_AUTO_PDF) {
+          logger.info("Step 3: Cloning workbook for PDF");
+          const pdfWorkbook = await excelService.cloneWorkbook(workbook);
+          // Exclude categories that should not appear in the PDF report.
+          excelService.insertPhotoRecords(pdfWorkbook, inspectionData.fotos || [], {
+            excludeCategories: ['revision_interna', 'prueba_hidrostatica', 'medicion_espesores', 'proteccion_catodica'],
+          });
+          excelService.prepareWorkbookForPdf(pdfWorkbook, [
+            'Prueba Hidrostática',
+            'SOPORTE',
+          ]);
+          await excelService.saveWorkbook(pdfWorkbook, pdfSourceExcelPath);
+          logger.info("Step 3 complete: PDF source ready", { pdfSourceExcelPath });
+
+          logger.info("Step 4: Converting Excel to PDF via Google Sheets");
+          await driveService.convertExcelToPdf(pdfSourceExcelPath, pdfPath);
+          logger.info("Step 4 complete: PDF generated", { pdfPath });
+        }
+
+        logger.info("Step 3: Uploading Excel to Drive");
+        const dbFolders = await driveService.getDriveFolders();
+        const informesFolder =
+          dbFolders.INF ||
+          config.google.drive.folders.INF ||
+          config.google.drive.parentFolderId;
+        const excelTargetFolder = draftStorage?.rootFolderId || informesFolder;
+
+        excelUploadResult = await driveService.uploadFile({
+          localPath: excelPath,
+          fileName: excelFileName,
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          appProperties: {
+            Usuario: String(draftData.assignedUsers || ''),
+            NumCert: String(numCertForName),
+            Serial: String(serialForName),
+          },
+          folderId: excelTargetFolder,
         });
-        excelService.prepareWorkbookForPdf(pdfWorkbook, [
-          'Prueba Hidrostática',
-          'SOPORTE',
-        ]);
-        await excelService.saveWorkbook(pdfWorkbook, pdfSourceExcelPath);
-        logger.info("Step 3 complete: PDF source ready", { pdfSourceExcelPath });
 
-        logger.info("Step 4: Converting Excel to PDF via Google Sheets");
-        await driveService.convertExcelToPdf(pdfSourceExcelPath, pdfPath);
-        logger.info("Step 4 complete: PDF generated", { pdfPath });
+        logger.info("Step 3 complete: Excel uploaded to Drive", {
+          folder: draftStorage?.rootFolderId ? "CERT_ROOT" : "INF",
+          fileName: excelFileName,
+          link: excelUploadResult?.webViewLink,
+        });
       }
-
-      // 3) Upload Excel and reuse its URL in `links.formatos`.
-      logger.info("Step 3: Uploading Excel to Drive");
-      const dbFolders = await driveService.getDriveFolders();
-      const informesFolder =
-        dbFolders.INF ||
-        config.google.drive.folders.INF ||
-        config.google.drive.parentFolderId;
-      const excelTargetFolder = draftStorage?.rootFolderId || informesFolder;
-
-      const excelUploadResult = await driveService.uploadFile({
-        localPath: excelPath,
-        fileName: excelFileName,
-        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        appProperties: {
-          Usuario: String(draftData.assignedUsers || ''),
-          NumCert: String(numCertForName),
-          Serial: String(serialForName),
-        },
-        folderId: excelTargetFolder,
-      });
-
-      logger.info("Step 3 complete: Excel uploaded to Drive", {
-        folder: draftStorage?.rootFolderId ? "CERT_ROOT" : "INF",
-        fileName: excelFileName,
-        link: excelUploadResult?.webViewLink,
-      });
 
       // 4) Upload photos to Drive and prepare photo metadata
       logger.info("Step 4: Processing photos for Drive upload");
@@ -1891,14 +1893,20 @@ router.post(
         draftData.storage = draftStorage;
       }
 
-      // Persist uploaded Excel URL as legacy `formatos` link.
-      draftData.links = {
-        ...(draftData.links || {}),
-        formatos: excelUploadResult?.webViewLink || '#',
-        ...(draftStorage?.rootFolderLink
-          ? { driveFolder: draftStorage.rootFolderLink }
-          : {}),
-      };
+      if (ENABLE_EXCEL_FORMAT_UPLOAD && excelUploadResult?.webViewLink) {
+        draftData.links = {
+          ...(draftData.links || {}),
+          formatos: excelUploadResult.webViewLink,
+          ...(draftStorage?.rootFolderLink
+            ? { driveFolder: draftStorage.rootFolderLink }
+            : {}),
+        };
+      } else if (draftStorage?.rootFolderLink) {
+        draftData.links = {
+          ...(draftData.links || {}),
+          driveFolder: draftStorage.rootFolderLink,
+        };
+      }
 
       // NUEVO: Pasar la inspección completa y las fotos procesadas al draft
       draftData.inspeccionCompleta = inspectionData;
@@ -1918,10 +1926,12 @@ router.post(
       res.status(201).json(draft);
     } finally {
       // Always clean up temporary files.
-      try {
-        fs.unlinkSync(excelPath);
-      } catch (_err) {
-        // Best-effort cleanup.
+      if (ENABLE_EXCEL_FORMAT_UPLOAD) {
+        try {
+          fs.unlinkSync(excelPath);
+        } catch (_err) {
+          // Best-effort cleanup.
+        }
       }
 
       if (ENABLE_AUTO_PDF) {

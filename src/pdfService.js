@@ -51,6 +51,9 @@ class PdfService {
       equiposUtilizados: true,
       reporteEvaluacion: true,
       conexionesAccesorios: true,
+      pruebaHidrostatica: true,
+      pruebaHermeticidad: true,
+      medicionEspesores: true,
       firmas: true,
       fotos: true,
     };

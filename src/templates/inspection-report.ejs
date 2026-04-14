@@ -277,6 +277,29 @@
       font-style: italic;
       font-size: 9px;
     }
+
+    .tech-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    .tech-table th,
+    .tech-table td {
+      border: 1px solid #1b1b1b;
+      padding: 4px 5px;
+      word-break: break-word;
+      vertical-align: middle;
+    }
+    .tech-table th {
+      background: #dbe8fb;
+      text-transform: uppercase;
+      font-size: 9px;
+    }
+    .tech-box {
+      border: 1px solid #1b1b1b;
+      border-top: 0;
+      padding: 6px;
+    }
   </style>
 </head>
 <body>
@@ -288,8 +311,54 @@
 
     const showPage2 = sectionFlags.reporteEvaluacion !== false;
     const showPage3 = sectionFlags.conexionesAccesorios !== false;
-    const showPage4 = sectionFlags.fotos !== false && photos && photos.length > 0;
-    const totalPages = 1 + (showPage2 ? 1 : 0) + (showPage3 ? 1 : 0) + (showPage4 ? 1 : 0);
+
+    const medicionEspesores = inspectionData.medicionEspesores || {};
+    const pruebaHidrostatica = inspectionData.pruebaHidrostatica || {};
+    const pruebaHermeticidad = inspectionData.pruebaHermeticidad || {};
+
+    const hasText = (value) => String(value || '').trim().length > 0;
+    const hasRows = (rows) => Array.isArray(rows) && rows.length > 0;
+
+    const hasMedicionEspesoresData =
+      hasRows(medicionEspesores.cabeza1) ||
+      hasRows(medicionEspesores.cabeza2) ||
+      hasRows(medicionEspesores.cuerpo) ||
+      medicionEspesores.espesorMinimoCabeza !== null ||
+      medicionEspesores.espesorMinimoCuerpo !== null;
+
+    const hasPruebaHidrostaticaData =
+      hasRows(pruebaHidrostatica.intervalos) ||
+      hasRows(pruebaHidrostatica.revisionHermeticidad) ||
+      hasText(pruebaHidrostatica.procedimientoRealizado) ||
+      hasText(pruebaHidrostatica.duracionPrueba) ||
+      hasText(pruebaHidrostatica.fluidoUtilizado) ||
+      hasText(pruebaHidrostatica.equiposUtilizados?.registradorDigital) ||
+      hasText(pruebaHidrostatica.equiposUtilizados?.transductorPresion) ||
+      hasText(pruebaHidrostatica.equiposUtilizados?.termocupla) ||
+      hasText(pruebaHidrostatica.equiposUtilizados?.manometro) ||
+      hasText(pruebaHidrostatica.observaciones);
+
+    const hasPruebaHermeticidadData =
+      hasRows(pruebaHermeticidad.revisionHermeticidad) ||
+      hasText(pruebaHermeticidad.procedimientoRealizado) ||
+      hasText(pruebaHermeticidad.gasesUtilizados) ||
+      pruebaHermeticidad.equiposUtilizados?.solucionJabonosa === true ||
+      hasText(pruebaHermeticidad.equiposUtilizados?.detectorFugas) ||
+      hasText(pruebaHermeticidad.observaciones);
+
+    const showPage4 = sectionFlags.pruebaHidrostatica !== false && hasPruebaHidrostaticaData;
+    const showPage5 = sectionFlags.pruebaHermeticidad !== false && hasPruebaHermeticidadData;
+    const showPage6 = sectionFlags.medicionEspesores !== false && hasMedicionEspesoresData;
+    const showPage7 = sectionFlags.fotos !== false && photos && photos.length > 0;
+
+    const totalPages =
+      1 +
+      (showPage2 ? 1 : 0) +
+      (showPage3 ? 1 : 0) +
+      (showPage4 ? 1 : 0) +
+      (showPage5 ? 1 : 0) +
+      (showPage6 ? 1 : 0) +
+      (showPage7 ? 1 : 0);
     let pageNum = 0;
 
     const items = inspectionData.itemsEvaluar || {};
@@ -688,6 +757,275 @@
 
   <% if (showPage4) { %>
   <!-- PAGINA 4 -->
+  <div class="page">
+    <div class="frame">
+      <table class="header">
+        <tr>
+          <td class="header-left">
+            <% if (combinedLogo) { %>
+              <img src="<%= combinedLogo %>" alt="FARES ONAC" />
+            <% } else { %>
+              <% if (faresLogo) { %><img src="<%= faresLogo %>" alt="FARES" /><% } %>
+              <% if (onacLogo) { %><img src="<%= onacLogo %>" alt="ONAC" /><% } %>
+            <% } %>
+          </td>
+          <td class="header-title">PRUEBA HIDROSTÁTICA</td>
+          <td style="width:170px;padding:0;">
+            <table class="header-meta" style="width:100%;height:100%;">
+              <tr><td>Código: ID-PS-10</td></tr>
+              <tr><td>Versión: 6</td></tr>
+              <tr><td>Fecha: 2026-04-01</td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+
+      <div class="blue-title">Datos Generales</div>
+      <table class="tech-table">
+        <tr>
+          <th style="width:25%;">Procedimiento realizado</th>
+          <th style="width:15%;">Duración</th>
+          <th style="width:20%;">Fluido utilizado</th>
+          <th>Equipos utilizados</th>
+        </tr>
+        <tr>
+          <td><%= pruebaHidrostatica.procedimientoRealizado || '—' %></td>
+          <td><%= pruebaHidrostatica.duracionPrueba || '—' %></td>
+          <td><%= pruebaHidrostatica.fluidoUtilizado || '—' %></td>
+          <td>
+            Registrador: <%= pruebaHidrostatica.equiposUtilizados?.registradorDigital || '—' %><br />
+            Transductor: <%= pruebaHidrostatica.equiposUtilizados?.transductorPresion || '—' %><br />
+            Termocupla: <%= pruebaHidrostatica.equiposUtilizados?.termocupla || '—' %><br />
+            Manómetro: <%= pruebaHidrostatica.equiposUtilizados?.manometro || '—' %>
+          </td>
+        </tr>
+      </table>
+
+      <div class="blue-title" style="margin-top:4px;">Intervalos de la prueba</div>
+      <table class="tech-table">
+        <tr>
+          <th style="width:20%;">Tiempo</th>
+          <th style="width:25%;">Presión</th>
+          <th>Observación</th>
+        </tr>
+        <% const intervalos = pruebaHidrostatica.intervalos || []; %>
+        <% if (intervalos.length === 0) { %>
+          <tr><td colspan="3" class="center">Sin intervalos registrados.</td></tr>
+        <% } %>
+        <% intervalos.forEach((it) => { %>
+          <tr>
+            <td><%= it.tiempo || '—' %></td>
+            <td><%= it.presion != null && it.presion !== '' ? it.presion : '—' %> <%= it.unidad || '' %></td>
+            <td><%= it.observacion || '—' %></td>
+          </tr>
+        <% }) %>
+      </table>
+
+      <div class="blue-title" style="margin-top:4px;">Revisión de hermeticidad</div>
+      <table class="tech-table">
+        <tr>
+          <th>Descripción</th>
+          <th style="width:42px;">Sí</th>
+          <th style="width:42px;">No</th>
+        </tr>
+        <% const revHidro = pruebaHidrostatica.revisionHermeticidad || []; %>
+        <% if (revHidro.length === 0) { %>
+          <tr><td colspan="3" class="center">Sin revisión registrada.</td></tr>
+        <% } %>
+        <% revHidro.forEach((rev) => { %>
+          <tr>
+            <td><%= rev.descripcion || rev.item || '—' %></td>
+            <td class="center"><%= rev.cumple === true ? 'X' : '' %></td>
+            <td class="center"><%= rev.cumple === false ? 'X' : '' %></td>
+          </tr>
+        <% }) %>
+      </table>
+
+      <div class="blue-title" style="margin-top:4px;">Observaciones</div>
+      <div class="tech-box"><%= pruebaHidrostatica.observaciones || '—' %></div>
+    </div>
+    <div class="page-number">Página <%= ++pageNum %> de <%= totalPages %></div>
+  </div>
+  <% } %>
+
+  <% if (showPage5) { %>
+  <!-- PAGINA 5 -->
+  <div class="page">
+    <div class="frame">
+      <table class="header">
+        <tr>
+          <td class="header-left">
+            <% if (combinedLogo) { %>
+              <img src="<%= combinedLogo %>" alt="FARES ONAC" />
+            <% } else { %>
+              <% if (faresLogo) { %><img src="<%= faresLogo %>" alt="FARES" /><% } %>
+              <% if (onacLogo) { %><img src="<%= onacLogo %>" alt="ONAC" /><% } %>
+            <% } %>
+          </td>
+          <td class="header-title">PRUEBA DE HERMETICIDAD</td>
+          <td style="width:170px;padding:0;">
+            <table class="header-meta" style="width:100%;height:100%;">
+              <tr><td>Código: ID-PS-10</td></tr>
+              <tr><td>Versión: 6</td></tr>
+              <tr><td>Fecha: 2026-04-01</td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+
+      <div class="blue-title">Datos Generales</div>
+      <table class="tech-table">
+        <tr>
+          <th style="width:40%;">Procedimiento realizado</th>
+          <th style="width:20%;">Gases utilizados</th>
+          <th>Equipos utilizados</th>
+        </tr>
+        <tr>
+          <td><%= pruebaHermeticidad.procedimientoRealizado || '—' %></td>
+          <td><%= pruebaHermeticidad.gasesUtilizados || '—' %></td>
+          <td>
+            Solución jabonosa: <%= pruebaHermeticidad.equiposUtilizados?.solucionJabonosa ? 'Sí' : 'No' %><br />
+            Detector de fugas: <%= pruebaHermeticidad.equiposUtilizados?.detectorFugas || '—' %>
+          </td>
+        </tr>
+      </table>
+
+      <div class="blue-title" style="margin-top:4px;">Revisión de hermeticidad</div>
+      <table class="tech-table">
+        <tr>
+          <th>Descripción</th>
+          <th style="width:42px;">Sí</th>
+          <th style="width:42px;">No</th>
+        </tr>
+        <% const revHerm = pruebaHermeticidad.revisionHermeticidad || []; %>
+        <% if (revHerm.length === 0) { %>
+          <tr><td colspan="3" class="center">Sin revisión registrada.</td></tr>
+        <% } %>
+        <% revHerm.forEach((rev) => { %>
+          <tr>
+            <td><%= rev.descripcion || rev.item || '—' %></td>
+            <td class="center"><%= rev.cumple === true ? 'X' : '' %></td>
+            <td class="center"><%= rev.cumple === false ? 'X' : '' %></td>
+          </tr>
+        <% }) %>
+      </table>
+
+      <div class="blue-title" style="margin-top:4px;">Observaciones</div>
+      <div class="tech-box"><%= pruebaHermeticidad.observaciones || '—' %></div>
+    </div>
+    <div class="page-number">Página <%= ++pageNum %> de <%= totalPages %></div>
+  </div>
+  <% } %>
+
+  <% if (showPage6) { %>
+  <!-- PAGINA 6 -->
+  <div class="page">
+    <div class="frame">
+      <table class="header">
+        <tr>
+          <td class="header-left">
+            <% if (combinedLogo) { %>
+              <img src="<%= combinedLogo %>" alt="FARES ONAC" />
+            <% } else { %>
+              <% if (faresLogo) { %><img src="<%= faresLogo %>" alt="FARES" /><% } %>
+              <% if (onacLogo) { %><img src="<%= onacLogo %>" alt="ONAC" /><% } %>
+            <% } %>
+          </td>
+          <td class="header-title">MEDICIÓN DE ESPESORES</td>
+          <td style="width:170px;padding:0;">
+            <table class="header-meta" style="width:100%;height:100%;">
+              <tr><td>Código: ID-PS-10</td></tr>
+              <tr><td>Versión: 6</td></tr>
+              <tr><td>Fecha: 2026-04-01</td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+
+      <div class="blue-title" style="margin-top:4px;">Cabeza 1</div>
+      <table class="tech-table">
+        <tr>
+          <th style="width:25%;">Punto</th>
+          <th style="width:25%;">Espesor</th>
+          <th style="width:25%;">Unidad</th>
+          <th>Observación</th>
+        </tr>
+        <% const cabeza1Rows = medicionEspesores.cabeza1 || []; %>
+        <% if (cabeza1Rows.length === 0) { %>
+          <tr><td colspan="4" class="center">Sin datos registrados.</td></tr>
+        <% } %>
+        <% cabeza1Rows.forEach((row, idx) => { %>
+          <tr>
+            <td><%= row.punto || `P${idx + 1}` %></td>
+            <td><%= row.espesor != null && row.espesor !== '' ? row.espesor : '—' %></td>
+            <td><%= row.unidad || 'mm' %></td>
+            <td><%= row.observacion || '—' %></td>
+          </tr>
+        <% }) %>
+      </table>
+
+      <div class="blue-title" style="margin-top:4px;">Cabeza 2</div>
+      <table class="tech-table">
+        <tr>
+          <th style="width:25%;">Punto</th>
+          <th style="width:25%;">Espesor</th>
+          <th style="width:25%;">Unidad</th>
+          <th>Observación</th>
+        </tr>
+        <% const cabeza2Rows = medicionEspesores.cabeza2 || []; %>
+        <% if (cabeza2Rows.length === 0) { %>
+          <tr><td colspan="4" class="center">Sin datos registrados.</td></tr>
+        <% } %>
+        <% cabeza2Rows.forEach((row, idx) => { %>
+          <tr>
+            <td><%= row.punto || `P${idx + 1}` %></td>
+            <td><%= row.espesor != null && row.espesor !== '' ? row.espesor : '—' %></td>
+            <td><%= row.unidad || 'mm' %></td>
+            <td><%= row.observacion || '—' %></td>
+          </tr>
+        <% }) %>
+      </table>
+
+      <div class="blue-title" style="margin-top:4px;">Cuerpo</div>
+      <table class="tech-table">
+        <tr>
+          <th style="width:25%;">Punto</th>
+          <th style="width:25%;">Espesor</th>
+          <th style="width:25%;">Unidad</th>
+          <th>Observación</th>
+        </tr>
+        <% const cuerpoRows = medicionEspesores.cuerpo || []; %>
+        <% if (cuerpoRows.length === 0) { %>
+          <tr><td colspan="4" class="center">Sin datos registrados.</td></tr>
+        <% } %>
+        <% cuerpoRows.forEach((row, idx) => { %>
+          <tr>
+            <td><%= row.punto || `P${idx + 1}` %></td>
+            <td><%= row.espesor != null && row.espesor !== '' ? row.espesor : '—' %></td>
+            <td><%= row.unidad || 'mm' %></td>
+            <td><%= row.observacion || '—' %></td>
+          </tr>
+        <% }) %>
+      </table>
+
+      <div class="blue-title" style="margin-top:4px;">Espesores mínimos</div>
+      <table class="tech-table">
+        <tr>
+          <th>Espesor mínimo cabeza</th>
+          <th>Espesor mínimo cuerpo</th>
+        </tr>
+        <tr>
+          <td><%= medicionEspesores.espesorMinimoCabeza != null && medicionEspesores.espesorMinimoCabeza !== '' ? medicionEspesores.espesorMinimoCabeza : '—' %></td>
+          <td><%= medicionEspesores.espesorMinimoCuerpo != null && medicionEspesores.espesorMinimoCuerpo !== '' ? medicionEspesores.espesorMinimoCuerpo : '—' %></td>
+        </tr>
+      </table>
+    </div>
+    <div class="page-number">Página <%= ++pageNum %> de <%= totalPages %></div>
+  </div>
+  <% } %>
+
+  <% if (showPage7) { %>
+  <!-- PAGINA 7 -->
   <div class="page">
     <div class="frame">
       <div class="blue-title" style="font-size:14px;">ANEXO</div>
