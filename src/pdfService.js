@@ -7,6 +7,7 @@ import ejs from "ejs";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { execSync } from "child_process";
 import { logger } from "./utils.js";
 import { driveService } from "./driveService.js";
 import { config } from "./config.js";
@@ -39,6 +40,7 @@ class PdfService {
     };
     this.signatureCache = new Map();
     this.browser = null;
+    this.browserInstallAttempted = false;
   }
 
   normalizeSelectedSections(selectedSections) {
@@ -150,7 +152,7 @@ class PdfService {
    */
   async getBrowser() {
     if (!this.browser || !this.browser.isConnected()) {
-      this.browser = await puppeteer.launch({
+      const launchOptions = {
         headless: "new",
         args: [
           "--no-sandbox",
@@ -158,7 +160,35 @@ class PdfService {
           "--disable-dev-shm-usage",
           "--disable-gpu",
         ],
-      });
+      };
+
+      try {
+        this.browser = await puppeteer.launch(launchOptions);
+      } catch (error) {
+        const message = String(error?.message || "");
+        const chromeMissing = message.includes("Could not find Chrome");
+
+        if (chromeMissing && !this.browserInstallAttempted) {
+          this.browserInstallAttempted = true;
+          logger.warn("Chrome binary missing, attempting one-time puppeteer install", {
+            error: message,
+          });
+
+          try {
+            execSync("npx puppeteer browsers install chrome", {
+              stdio: "inherit",
+            });
+            this.browser = await puppeteer.launch(launchOptions);
+          } catch (installError) {
+            logger.error("Failed to install Chrome binary for puppeteer", {
+              error: installError?.message || String(installError),
+            });
+            throw installError;
+          }
+        } else {
+          throw error;
+        }
+      }
     }
     return this.browser;
   }
