@@ -460,6 +460,10 @@
           <div class="diag" style="min-height:72px;justify-content:flex-start;padding:8px;text-align:left;color:#111;font-style:normal;">
             <%= report.observacionesRecomendaciones || '—' %>
           </div>
+          <div class="blue-title">Recibido por</div>
+          <div class="diag" style="min-height:36px;justify-content:flex-start;padding:8px;text-align:left;color:#111;font-style:normal;">
+            <%= inspectionData.datosInforme?.recibidoPor || '—' %>
+          </div>
         </div>
 
         <div class="box">
@@ -578,10 +582,6 @@
         <tr>
           <td><strong>Observaciones y recomendaciones</strong></td>
           <td colspan="2"><%= report.observacionesRecomendaciones || '—' %></td>
-        </tr>
-        <tr>
-          <td><strong>Recibido por</strong></td>
-          <td colspan="2"><%= inspectionData.datosInforme?.recibidoPor || '—' %></td>
         </tr>
       </table>
 
