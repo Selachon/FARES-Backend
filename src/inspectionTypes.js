@@ -203,6 +203,7 @@ export function createEmptyInspeccionCompleta() {
       tipoInspeccion: 'PARCIAL',
       fechaInspeccion: new Date().toISOString(),
       fechaExpedicion: new Date().toISOString(),
+      recibidoPor: '',
     },
     datosCliente: {
       cliente: '',
