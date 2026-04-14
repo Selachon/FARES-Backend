@@ -175,6 +175,7 @@ class CertificateService {
         resultado = "CUMPLE",
         tipoEquipo,
         tipoInspeccion,
+        createdBy,
       } = certificateData;
 
       const db = await connect();
@@ -236,6 +237,7 @@ class CertificateService {
         status: "ACTIVO",
         renewedAt: null,
         links,
+        createdBy: sanitizeString(createdBy || "") || null,
         // Guardar storage de Drive para futuras operaciones
         storage: storage || null,
         createdAt: new Date()
@@ -502,6 +504,20 @@ class CertificateService {
       }
     }
 
+    if (updateData.links && typeof updateData.links === "object") {
+      updates.links = {
+        ...(existing.links || {}),
+        ...updateData.links,
+      };
+    }
+
+    if (updateData.storage && typeof updateData.storage === "object") {
+      updates.storage = {
+        ...(existing.storage || {}),
+        ...updateData.storage,
+      };
+    }
+
     return updates;
   }
 
@@ -579,6 +595,7 @@ class CertificateService {
       assignedUsers: certificate.assignedUsers,
       tipoEquipo: certificate.tipoEquipo || null,
       tipoInspeccion: certificate.tipoInspeccion || null,
+      createdBy: sanitizeString(certificate.createdBy || "") || null,
 
       
       status: exp?.computedStatus || certificate.status || "ACTIVO",
@@ -591,6 +608,7 @@ class CertificateService {
       isExpiringSoon: !!exp?.isExpiringSoon,
 
       links: certificate.links || { informes: "#", formatos: "#", certificados: "#", anexos: "#", driveFolder: "#" },
+      storage: certificate.storage || null,
       
       // Indicar si tiene inspección completa (para UI)
       hasInspeccionCompleta: !!certificate.inspeccionCompleta,

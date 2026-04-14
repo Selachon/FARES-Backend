@@ -468,8 +468,14 @@ router.post(
     { name: "anexos", maxCount: 1 },
   ]),
   asyncHandler(async (req, res) => {
+    const createdBy = String(req.user?.username || "").trim();
+    const payload = {
+      ...req.body,
+      ...(createdBy ? { createdBy } : {}),
+    };
+
     const certificate = await certificateService.createCertificate(
-      req.body,
+      payload,
       req.files,
     );
     // Notify assigned users via SSE.
@@ -623,9 +629,10 @@ router.put(
   adminGuard,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { inspeccionCompleta, fotos } = req.body;
+    const { inspeccionCompleta, fotos, ...recordUpdates } = req.body;
     
     const draft = await draftService.updateDraft(id, {
+      ...recordUpdates,
       inspeccionCompleta,
       fotos,
     }, {});
@@ -642,9 +649,10 @@ router.put(
   adminGuard,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { inspeccionCompleta, fotos } = req.body;
+    const { inspeccionCompleta, fotos, ...recordUpdates } = req.body;
     
     const certificate = await certificateService.updateCertificate(id, {
+      ...recordUpdates,
       inspeccionCompleta,
       fotos,
     }, {});
@@ -706,7 +714,10 @@ router.post(
 
       photoData.driveFileId = uploadResult?.id || null;
       photoData.driveUrl = uploadResult?.webViewLink || null;
-      photoData.thumbnailUrl = uploadResult?.thumbnailLink || null;
+      photoData.thumbnailUrl =
+        driveService.getThumbnailUrl(photoData.driveFileId) ||
+        uploadResult?.thumbnailLink ||
+        null;
     } catch (uploadErr) {
       logger.warn("Failed to upload photo to Drive", { error: uploadErr.message });
     } finally {
@@ -848,7 +859,10 @@ router.post(
 
       photoData.driveFileId = uploadResult?.id || null;
       photoData.driveUrl = uploadResult?.webViewLink || null;
-      photoData.thumbnailUrl = uploadResult?.thumbnailLink || null;
+      photoData.thumbnailUrl =
+        driveService.getThumbnailUrl(photoData.driveFileId) ||
+        uploadResult?.thumbnailLink ||
+        null;
     } catch (uploadErr) {
       logger.warn("Failed to upload photo to Drive", { error: uploadErr.message });
     } finally {
@@ -940,7 +954,7 @@ router.post(
   adminGuard,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { selectedPhotoIds } = req.body;
+    const { selectedPhotoIds, selectedSections } = req.body;
 
     const draft = await draftService.getDraftById(id);
     
@@ -951,14 +965,19 @@ router.post(
       });
     }
 
-    const pdfBuffer = await pdfService.generatePdf(draft, selectedPhotoIds);
+    const pdfBuffer = await pdfService.generatePdf(
+      draft,
+      selectedPhotoIds,
+      selectedSections,
+    );
 
     res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", pdfBuffer.length);
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="INF_${draft.empresa || 'DRAFT'}_${draft.numCert || 'DRAFT'}_${draft.serial || 'SERIAL'}.pdf"`
     );
-    res.send(pdfBuffer);
+    res.status(200).end(pdfBuffer);
   }),
 );
 
@@ -971,7 +990,7 @@ router.post(
   adminGuard,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { selectedPhotoIds, uploadToDrive = true } = req.body;
+    const { selectedPhotoIds, selectedSections, uploadToDrive = true } = req.body;
 
     const certificate = await certificateService.getCertificateById(id);
     
@@ -984,9 +1003,10 @@ router.post(
 
     if (uploadToDrive) {
       // Generar y subir a Drive
-      const { pdfUrl, pdfFileId } = await pdfService.generateAndUploadPdf(
+      const { pdfUrl, pdfFileId, storage } = await pdfService.generateAndUploadPdf(
         certificate,
-        selectedPhotoIds
+        selectedPhotoIds,
+        selectedSections,
       );
 
       // Actualizar link del informe en el certificado
@@ -996,7 +1016,14 @@ router.post(
         informes: pdfUrl || existingLinks.informes,
       };
 
-      await certificateService.updateCertificate(id, { links: updatedLinks }, {});
+      await certificateService.updateCertificate(
+        id,
+        {
+          links: updatedLinks,
+          ...(storage?.rootFolderId ? { storage } : {}),
+        },
+        {},
+      );
 
       res.json({
         success: true,
@@ -1006,14 +1033,19 @@ router.post(
       });
     } else {
       // Solo generar y descargar
-      const pdfBuffer = await pdfService.generatePdf(certificate, selectedPhotoIds);
+      const pdfBuffer = await pdfService.generatePdf(
+        certificate,
+        selectedPhotoIds,
+        selectedSections,
+      );
 
       res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Length", pdfBuffer.length);
       res.setHeader(
         "Content-Disposition",
         `attachment; filename="INF_${certificate.empresa}_${certificate.numCert}_${certificate.serial}.pdf"`
       );
-      res.send(pdfBuffer);
+      res.status(200).end(pdfBuffer);
     }
   }),
 );
@@ -1784,7 +1816,10 @@ router.post(
               includeInPdf: photo.includeInPdf !== false,
               driveFileId: photoUploadResult?.id || null,
               driveUrl: photoUploadResult?.webViewLink || null,
-              thumbnailUrl: photoUploadResult?.thumbnailLink || null,
+              thumbnailUrl:
+                driveService.getThumbnailUrl(photoUploadResult?.id) ||
+                photoUploadResult?.thumbnailLink ||
+                null,
             });
 
             if (photoUploadResult?.id) {
