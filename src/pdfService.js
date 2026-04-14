@@ -30,6 +30,14 @@ class PdfService {
     this.templatePath = path.join(__dirname, "templates", "inspection-report.ejs");
     this.faresLogoPath = path.join(__dirname, "templates", "assets", "fares-logo.png");
     this.onacLogoPath = path.join(__dirname, "templates", "assets", "onac-logo.png");
+    this.combinedLogoPath = path.join(__dirname, "templates", "assets", "fares-onac.webp");
+    this.signatureAssetPaths = {
+      AXEL: path.join(__dirname, "templates", "assets", "firma-axel.png"),
+      SERGIO: path.join(__dirname, "templates", "assets", "firma-sergio.png"),
+      SOTO: path.join(__dirname, "templates", "assets", "firma-soto.png"),
+      YULIAN: path.join(__dirname, "templates", "assets", "firma-yulian.png"),
+    };
+    this.signatureCache = new Map();
     this.browser = null;
   }
 
@@ -68,6 +76,75 @@ class PdfService {
     }
   }
 
+  normalizeSignerName(value) {
+    return String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .trim();
+  }
+
+  getSignatureKeyForSigner(name) {
+    const normalized = this.normalizeSignerName(name);
+    if (!normalized) return null;
+
+    if (normalized.includes("AXEL")) return "AXEL";
+    if (normalized.includes("SERGIO")) return "SERGIO";
+    if (normalized.includes("SOTO")) return "SOTO";
+    if (normalized.includes("YULIAN")) return "YULIAN";
+
+    return null;
+  }
+
+  getSignatureDataUriForSigner(name) {
+    const key = this.getSignatureKeyForSigner(name);
+    if (!key) return null;
+
+    if (this.signatureCache.has(key)) {
+      return this.signatureCache.get(key);
+    }
+
+    const imagePath = this.signatureAssetPaths[key];
+    const uri = this.getImageDataUri(imagePath);
+    this.signatureCache.set(key, uri);
+    return uri;
+  }
+
+  async resolvePhotoDataUri(photo) {
+    const fileId =
+      photo?.driveFileId ||
+      driveService.extractFileIdFromLink(photo?.driveUrl) ||
+      driveService.extractFileIdFromLink(photo?.thumbnailUrl);
+
+    if (!fileId) return null;
+
+    try {
+      return await driveService.getFileDataUri(fileId, "image/jpeg");
+    } catch (error) {
+      logger.warn("Could not embed photo as data URI for PDF", {
+        fileId,
+        error: error.message,
+      });
+      return null;
+    }
+  }
+
+  async enrichPhotosForPdf(photos) {
+    if (!Array.isArray(photos) || photos.length === 0) return [];
+
+    const enriched = await Promise.all(
+      photos.map(async (photo) => {
+        const embeddedSrc = await this.resolvePhotoDataUri(photo);
+        return {
+          ...photo,
+          pdfSrc: embeddedSrc || photo?.thumbnailUrl || photo?.driveUrl || null,
+        };
+      }),
+    );
+
+    return enriched;
+  }
+
   /**
    * Obtener instancia de browser (lazy initialization)
    */
@@ -103,6 +180,7 @@ class PdfService {
     const templateContent = fs.readFileSync(this.templatePath, "utf-8");
     
     // Preparar datos para la plantilla
+    const inspection = data?.inspection || {};
     const templateData = {
       ...data,
       PHOTO_CATEGORY_LABELS,
@@ -110,6 +188,9 @@ class PdfService {
       LABELS_EQUIPOS,
       faresLogo: this.getImageDataUri(this.faresLogoPath),
       onacLogo: this.getImageDataUri(this.onacLogoPath),
+      combinedLogo: this.getImageDataUri(this.combinedLogoPath, "image/webp"),
+      inspectorSignature: this.getSignatureDataUriForSigner(inspection?.inspector),
+      directorSignature: this.getSignatureDataUriForSigner(inspection?.directorTecnico),
       formatDate: (dateStr) => {
         if (!dateStr) return "—";
         const date = new Date(dateStr);
@@ -161,6 +242,8 @@ class PdfService {
         (p) => !EXCLUDED_PDF_PHOTO_CATEGORIES.has(String(p.category || "")),
       );
 
+      photosToInclude = await this.enrichPhotosForPdf(photosToInclude);
+
       // Agrupar fotos por categoría
       const photosByCategory = {};
       for (const photo of photosToInclude) {
@@ -192,6 +275,7 @@ class PdfService {
 
       const pdfBuffer = await page.pdf({
         format: "Letter",
+        scale: 0.95,
         printBackground: true,
         margin: {
           top: "0.5in",
@@ -245,9 +329,22 @@ class PdfService {
     fs.writeFileSync(tempPath, pdfBuffer);
 
     try {
-      // Subir a Drive
+      // Subir a Drive (priorizar carpeta del certificado)
+      let storage = certificate.storage || null;
+      if (!storage?.rootFolderId && certificate.numCert) {
+        try {
+          storage = await driveService.ensureCertificateFolderTree(certificate.numCert);
+        } catch (storageErr) {
+          logger.warn("Could not ensure certificate folder tree for PDF upload", {
+            numCert: certificate.numCert,
+            error: storageErr.message,
+          });
+        }
+      }
+
       const dbFolders = await driveService.getDriveFolders();
-      const folderId = dbFolders.INF || config.google.drive.parentFolderId;
+      const folderId =
+        storage?.rootFolderId || dbFolders.INF || config.google.drive.parentFolderId;
 
       const uploadResult = await driveService.uploadFile({
         localPath: tempPath,
@@ -269,6 +366,7 @@ class PdfService {
       return {
         pdfUrl: uploadResult?.webViewLink || null,
         pdfFileId: uploadResult?.id || null,
+        storage,
       };
     } finally {
       // Limpiar archivo temporal

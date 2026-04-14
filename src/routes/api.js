@@ -629,9 +629,10 @@ router.put(
   adminGuard,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { inspeccionCompleta, fotos } = req.body;
+    const { inspeccionCompleta, fotos, ...recordUpdates } = req.body;
     
     const draft = await draftService.updateDraft(id, {
+      ...recordUpdates,
       inspeccionCompleta,
       fotos,
     }, {});
@@ -648,9 +649,10 @@ router.put(
   adminGuard,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
-    const { inspeccionCompleta, fotos } = req.body;
+    const { inspeccionCompleta, fotos, ...recordUpdates } = req.body;
     
     const certificate = await certificateService.updateCertificate(id, {
+      ...recordUpdates,
       inspeccionCompleta,
       fotos,
     }, {});
@@ -970,11 +972,12 @@ router.post(
     );
 
     res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", pdfBuffer.length);
     res.setHeader(
       "Content-Disposition",
       `attachment; filename="INF_${draft.empresa || 'DRAFT'}_${draft.numCert || 'DRAFT'}_${draft.serial || 'SERIAL'}.pdf"`
     );
-    res.send(pdfBuffer);
+    res.status(200).end(pdfBuffer);
   }),
 );
 
@@ -1000,7 +1003,7 @@ router.post(
 
     if (uploadToDrive) {
       // Generar y subir a Drive
-      const { pdfUrl, pdfFileId } = await pdfService.generateAndUploadPdf(
+      const { pdfUrl, pdfFileId, storage } = await pdfService.generateAndUploadPdf(
         certificate,
         selectedPhotoIds,
         selectedSections,
@@ -1013,7 +1016,14 @@ router.post(
         informes: pdfUrl || existingLinks.informes,
       };
 
-      await certificateService.updateCertificate(id, { links: updatedLinks }, {});
+      await certificateService.updateCertificate(
+        id,
+        {
+          links: updatedLinks,
+          ...(storage?.rootFolderId ? { storage } : {}),
+        },
+        {},
+      );
 
       res.json({
         success: true,
@@ -1030,11 +1040,12 @@ router.post(
       );
 
       res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Length", pdfBuffer.length);
       res.setHeader(
         "Content-Disposition",
         `attachment; filename="INF_${certificate.empresa}_${certificate.numCert}_${certificate.serial}.pdf"`
       );
-      res.send(pdfBuffer);
+      res.status(200).end(pdfBuffer);
     }
   }),
 );

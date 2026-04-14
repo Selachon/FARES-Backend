@@ -504,6 +504,20 @@ class CertificateService {
       }
     }
 
+    if (updateData.links && typeof updateData.links === "object") {
+      updates.links = {
+        ...(existing.links || {}),
+        ...updateData.links,
+      };
+    }
+
+    if (updateData.storage && typeof updateData.storage === "object") {
+      updates.storage = {
+        ...(existing.storage || {}),
+        ...updateData.storage,
+      };
+    }
+
     return updates;
   }
 
@@ -594,6 +608,7 @@ class CertificateService {
       isExpiringSoon: !!exp?.isExpiringSoon,
 
       links: certificate.links || { informes: "#", formatos: "#", certificados: "#", anexos: "#", driveFolder: "#" },
+      storage: certificate.storage || null,
       
       // Indicar si tiene inspección completa (para UI)
       hasInspeccionCompleta: !!certificate.inspeccionCompleta,

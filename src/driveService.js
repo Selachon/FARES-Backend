@@ -118,6 +118,29 @@ class DriveService {
     });
   }
 
+  // Download a Drive file as a data URI (useful for embedding images in PDFs).
+  async getFileDataUri(fileId, fallbackMimeType = "image/jpeg") {
+    return retryOperation(async () => {
+      const response = await this.drive.files.get(
+        {
+          fileId,
+          alt: "media",
+          supportsAllDrives: true,
+        },
+        {
+          responseType: "arraybuffer",
+        },
+      );
+
+      const buffer = Buffer.from(response.data || []);
+      if (!buffer.length) return null;
+
+      const mimeType =
+        response.headers?.["content-type"] || fallbackMimeType || "image/jpeg";
+      return `data:${mimeType};base64,${buffer.toString("base64")}`;
+    });
+  }
+
   // Create a folder and apply sharing permissions.
   async createFolder(name, parentFolderId) {
     performanceMonitor.trackDriveOperation();
