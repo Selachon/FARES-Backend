@@ -395,6 +395,24 @@
       'hermeticidad',
       'soportes',
     ];
+
+    const normalizeTag = (value) =>
+      String(value || '')
+        .trim()
+        .toLowerCase();
+
+    const getAccessoryPhoto = (accessoryId) => {
+      const targetTag = normalizeTag(`acc:${accessoryId}`);
+      if (!targetTag || targetTag === 'acc:') return null;
+
+      return (
+        allPhotos.find((ph) => {
+          if (ph?.category !== 'roscas_conexiones') return false;
+          const desc = normalizeTag(ph?.description || '');
+          return desc === targetTag;
+        }) || null
+      );
+    };
   %>
 
   <!-- PAGINA 1 -->
@@ -696,6 +714,7 @@
           <th>Año</th>
           <th>Fabricante</th>
           <th>Descripción</th>
+          <th style="width:120px;">Registro fotográfico</th>
           <th style="width:36px;">C</th>
           <th style="width:36px;">NC</th>
           <th>Criterio</th>
@@ -703,15 +722,23 @@
           <th>Fecha</th>
         </tr>
         <% if (accessories.length === 0) { %>
-        <tr><td colspan="10" class="center">Sin accesorios registrados.</td></tr>
+        <tr><td colspan="11" class="center">Sin accesorios registrados.</td></tr>
         <% } %>
         <% accessories.forEach((acc) => { %>
+        <% const accPhoto = getAccessoryPhoto(acc?.id); %>
         <tr>
           <td><%= acc.item || '—' %></td>
           <td><%= acc.serieMod || '—' %></td>
           <td><%= acc.anio || '—' %></td>
           <td><%= acc.fabricante || '—' %></td>
           <td><%= acc.estado?.descripcion || '—' %></td>
+          <td class="center">
+            <% if (accPhoto && (accPhoto.pdfSrc || accPhoto.thumbnailUrl || accPhoto.driveUrl)) { %>
+              <img class="thread-photo" src="<%= accPhoto.pdfSrc || accPhoto.thumbnailUrl || accPhoto.driveUrl %>" alt="<%= acc.item || 'accesorio' %>" />
+            <% } else { %>
+              —
+            <% } %>
+          </td>
           <td class="center"><%= acc.estado?.cumple ? 'X' : '' %></td>
           <td class="center"><%= acc.estado?.cumple === false ? 'X' : '' %></td>
           <td><%= acc.criterio || '—' %></td>
@@ -733,8 +760,7 @@
         <tr><td colspan="4" class="center">Sin verificación de roscas registrada.</td></tr>
         <% } %>
         <% roscas.forEach((r) => {
-          const p = allPhotos.find((ph) => ph.category === 'roscas_conexiones' && ph.description === `acc:${r.id}`)
-            || allPhotos.find((ph) => ph.category === 'roscas_conexiones');
+          const p = getAccessoryPhoto(r?.id) || allPhotos.find((ph) => ph.category === 'roscas_conexiones');
         %>
         <tr>
           <td class="center"><%= r.item || '—' %></td>
