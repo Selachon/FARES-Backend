@@ -11,13 +11,13 @@
       font-family: Arial, Helvetica, sans-serif;
       color: #111;
       font-size: 9px;
-      line-height: 1.25;
+      line-height: 1.18;
       background: #fff;
     }
 
     .page {
       width: 100%;
-      padding: 8px;
+      padding: 6px;
       page-break-after: always;
       position: relative;
     }
@@ -94,7 +94,7 @@
     .info-table td,
     .info-table th {
       border: 1px solid #1b1b1b;
-      padding: 3px 4px;
+      padding: 2px 3px;
       vertical-align: middle;
       word-break: break-word;
     }
@@ -110,7 +110,7 @@
     .diag {
       border: 1px solid #1b1b1b;
       border-top: 0;
-      min-height: 130px;
+      min-height: 100px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -138,12 +138,12 @@
     }
     .signature-block {
       border-top: 1px solid #1b1b1b;
-      padding: 6px 8px;
+      padding: 4px 6px;
       text-align: center;
     }
     .signature-image {
       max-width: 230px;
-      max-height: 68px;
+      max-height: 52px;
       object-fit: contain;
       margin: 0 auto -8px auto;
       display: block;
@@ -300,6 +300,72 @@
       border-top: 0;
       padding: 6px;
     }
+
+    .conclusion-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      border: 1px solid #1b1b1b;
+      border-top: 0;
+    }
+    .conclusion-table td,
+    .conclusion-table th {
+      border: 1px solid #1b1b1b;
+      padding: 3px 5px;
+      vertical-align: middle;
+      word-break: break-word;
+    }
+    .conclusion-label {
+      font-weight: 700;
+      text-transform: uppercase;
+      text-align: center;
+      background: #f3f6fb;
+    }
+    .conclusion-value {
+      font-weight: 700;
+      text-align: center;
+    }
+    .result-main {
+      font-size: 16px;
+      line-height: 1.1;
+      font-weight: 800;
+      letter-spacing: 0.3px;
+      text-align: center;
+      text-transform: uppercase;
+      background: #9ea6bf;
+    }
+    .result-main.result-c { background: #8bc34a; }
+    .result-main.result-nc { background: #ff3b30; color: #fff; }
+    .result-main.result-na { background: #ffeb3b; }
+    .result-main.result-ne { background: #9ea6bf; }
+    .notice-block {
+      text-align: center;
+      font-size: 8px;
+      line-height: 1.18;
+    }
+    .policy-title {
+      text-align: center;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding-bottom: 1px;
+    }
+    .legend-table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    .legend-table td {
+      border: 1px solid #1b1b1b;
+      padding: 2px 4px;
+      text-align: center;
+      font-weight: 700;
+    }
+    .legend-c { background: #8bc34a; }
+    .legend-nc { background: #ff3b30; color: #fff; }
+    .legend-na { background: #ffeb3b; }
+    .legend-ne { background: #9ea6bf; }
   </style>
 </head>
 <body>
@@ -308,6 +374,14 @@
     const inspectionData = inspection || {};
     const resultValue = (certificate.resultado || inspectionData.resultado || 'SIN CONCEPTO').toUpperCase();
     const resultClass = resultValue === 'NO CUMPLE' ? 'no-cumple' : (resultValue === 'SIN CONCEPTO' ? 'sin-concepto' : '');
+    const resultMainClass =
+      resultValue === 'CUMPLE'
+        ? 'result-c'
+        : resultValue === 'NO CUMPLE'
+          ? 'result-nc'
+          : resultValue === 'NO APLICA'
+            ? 'result-na'
+            : 'result-ne';
 
     const showPage2 = sectionFlags.reporteEvaluacion !== false;
     const showPage3 = sectionFlags.conexionesAccesorios !== false;
@@ -600,22 +674,52 @@
         </div>
       </div>
 
-      <div class="notes">
-        El ítem fue evaluado conforme a la resolución <strong><%= inspectionData.resolucion || '—' %></strong>
-        expedido por el Ministerio de Minas y Energía, artículos: <strong><%= inspectionData.articulos || '—' %></strong>.
-      </div>
-
-      <div class="result-strip">
-        <div class="result-label">Resultado de la inspección</div>
-        <div class="result-value <%= resultClass %>"><%= resultValue %></div>
-      </div>
-
-      <div class="notes">
-        En caso que el ítem inspeccionado cumpla con los criterios establecidos se emitirá un certificado de inspección,
-        el cual podrá cargarse en la plataforma SICERCO en el plazo operativo correspondiente.
-        <br />
-        Cualquier cliente que presente recurso puede comunicarlo por línea telefónica, correo, carta física o formato de quejas/apelaciones.
-      </div>
+      <table class="conclusion-table">
+        <tr>
+          <td style="width:33%;" class="center">El ítem fue evaluado conforme a la resolución:</td>
+          <td style="width:18%;" class="conclusion-value"><%= inspectionData.resolucion || '—' %></td>
+          <td style="width:31%;" class="center">expedido por el Ministerio de Minas y Energía, artículos:</td>
+          <td style="width:18%;" class="conclusion-value"><%= inspectionData.articulos || '—' %></td>
+        </tr>
+        <tr>
+          <td class="conclusion-label">Resultado de la inspección:</td>
+          <td class="result-main <%= resultMainClass %>"><%= resultValue %></td>
+          <td colspan="2" class="notice-block">
+            En caso que el ítem inspeccionado cumpla con los criterios establecidos se emitirá un CERTIFICADO DE
+            INSPECCIÓN, el cual será cargado a la plataforma de consulta de FARES dentro del plazo operativo correspondiente.
+          </td>
+        </tr>
+        <tr>
+          <td colspan="4" class="notice-block" style="font-size:9px;">
+            Cualquier cliente que presente algún recurso, puede comunicarlo mediante los siguientes medios:<br />
+            • Línea telefónica: 9387019 - 3014710771<br />
+            • Email: admin@faresbcs.com<br />
+            • Comunicación escrita por medio de carta física.<br />
+            • Descargando el formato ID-QA-01 Quejas y apelaciones de nuestra página en internet.
+          </td>
+        </tr>
+        <tr>
+          <td colspan="4" class="notice-block">
+            <div class="policy-title">Políticas de tiempo</div>
+            El plazo máximo para dar respuesta a un recurso presentado ante la entidad es de 5 días hábiles.<br />
+            Al ser recibido el recurso, será dirigido al líder a cargo del proceso correspondiente.<br />
+            Siendo este el responsable del análisis, evaluación y posterior desarrollo de las acciones correctivas frente al reclamo.
+          </td>
+        </tr>
+        <tr>
+          <td colspan="3" class="notice-block" style="font-size:8px;">
+            <strong>NOTA:</strong> El presente resultado se refiere al momento y condiciones en que se realizó la inspección en el sitio y día señalado en este informe.
+          </td>
+          <td style="padding:0;">
+            <table class="legend-table">
+              <tr><td style="width:65%;">CUMPLE</td><td class="legend-c">C</td></tr>
+              <tr><td>NO CUMPLE</td><td class="legend-nc">NC</td></tr>
+              <tr><td>NO APLICA</td><td class="legend-na">NA</td></tr>
+              <tr><td>NO ESPECIFICA</td><td class="legend-ne">NE</td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
     </div>
     <div class="page-number">Página <%= ++pageNum %> de <%= totalPages %></div>
   </div>
@@ -672,11 +776,7 @@
         </tr>
       </table>
 
-      <div class="notes" style="border-top:0;">
-        • La revisión parcial de cisternas debe efectuarse por lo menos una (1) vez al año para determinar el cumplimiento de las condiciones técnicas y de seguridad exigidas.
-        <br />
-        • La revisión total en cisternas debe efectuarse por lo menos una (1) vez cada cinco (5) años, antes de instalarla por primera vez o después de reparaciones.
-      </div>
+
     </div>
     <div class="page-number">Página <%= ++pageNum %> de <%= totalPages %></div>
   </div>
