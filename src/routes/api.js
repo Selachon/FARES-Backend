@@ -1550,6 +1550,13 @@ router.post(
     // Mobile app sends the full inspection payload.
     const { inspeccionCompleta, ...draftData } = req.body;
 
+    // App sync must not create/update `FOR` links from workbook flows.
+    // Keep legacy support in other routes, but force formatos off here.
+    draftData.links = {
+      ...(draftData.links && typeof draftData.links === "object" ? draftData.links : {}),
+      formatos: "#",
+    };
+
     if (!inspeccionCompleta) {
       return res.status(400).json({
         message: "inspeccionCompleta es requerido",
