@@ -372,6 +372,8 @@
   <%
     const sectionFlags = includeSections || {};
     const inspectionData = inspection || {};
+    const tipoInstalacion = String(inspectionData.informacionItem?.tipoInstalacion || '').toUpperCase();
+    const isCisterna = tipoInstalacion === 'CISTERNA';
     const resultValue = (certificate.resultado || inspectionData.resultado || 'SIN CONCEPTO').toUpperCase();
     const resultClass = resultValue === 'NO CUMPLE' ? 'no-cumple' : (resultValue === 'SIN CONCEPTO' ? 'sin-concepto' : '');
     const resultMainClass =
@@ -572,8 +574,10 @@
             <tr><td class="label">Ubicación</td><td><%= inspectionData.informacionItem?.ubicacion || '—' %></td></tr>
             <tr><td class="label">Dirección</td><td><%= inspectionData.informacionItem?.direccion || '—' %></td></tr>
           </table>
-          <div class="blue-title">Diagrama del Ítem</div>
-          <div class="diag">Diagrama referencial</div>
+          <div class="blue-title">Recibido por</div>
+          <div class="diag" style="min-height:36px;justify-content:flex-start;padding:8px;text-align:left;color:#111;font-style:normal;">
+            <%= inspectionData.datosInforme?.recibidoPor || '—' %>
+          </div>
         </div>
 
         <div class="box">
@@ -621,10 +625,6 @@
           <div class="diag" style="min-height:72px;justify-content:flex-start;padding:8px;text-align:left;color:#111;font-style:normal;">
             <%= report.observacionesRecomendaciones || '—' %>
           </div>
-          <div class="blue-title">Recibido por</div>
-          <div class="diag" style="min-height:36px;justify-content:flex-start;padding:8px;text-align:left;color:#111;font-style:normal;">
-            <%= inspectionData.datosInforme?.recibidoPor || '—' %>
-          </div>
         </div>
 
         <div class="box">
@@ -650,7 +650,7 @@
               ['Otro','otro'],
             ]; %>
             <% equipmentRows.forEach(([label,key]) => { %>
-            <tr><td class="label"><%= label %></td><td><%= inspectionData.equiposUtilizados?.[key] || 'N/A' %></td></tr>
+            <tr><td class="label"><%= label %></td><td><%= inspectionData.equiposUtilizados?.[key] || '-' %></td></tr>
             <% }) %>
           </table>
 
@@ -776,6 +776,17 @@
         </tr>
       </table>
 
+      <div class="notes" style="border-top:0;">
+        <% if (isCisterna) { %>
+          • La revisión parcial de cisternas debe efectuarse por lo menos una (1) vez al año para determinar el cumplimiento de las condiciones técnicas y de seguridad exigidas en el reglamento técnico vigente (Res. 40304 del 2018).
+          <br />
+          • La revisión total en cisternas debe efectuarse por lo menos una (1) vez cada cinco (5) años, antes de instalarlo por primera vez o cada vez que haya sido objeto de reparaciones.
+        <% } else { %>
+          • La revisión parcial se realiza antes de cada llenado y como mínimo 1 vez al año, quien suministre el Gas Licuado de Petróleo debe someter los tanques estacionarios a revisión parcial para determinar el cumplimiento de las condiciones técnicas y de seguridad exigidas en el reglamento técnico vigente (Res. 40490 del 2022 / Res. 40245 del 2016).
+          <br />
+          • La revisión total debe efectuarse por lo menos una (1) vez cada diez (10) años o cada vez que se someta a mantenimiento.
+        <% } %>
+      </div>
 
     </div>
     <div class="page-number">Página <%= ++pageNum %> de <%= totalPages %></div>
@@ -848,34 +859,6 @@
         <% }) %>
       </table>
 
-      <div class="blue-title" style="margin-top:4px;">Verificación de Conexiones Roscadas</div>
-      <table class="thread-table">
-        <tr>
-          <th style="width:170px;">Ítem</th>
-          <th>Registro Fotográfico</th>
-          <th style="width:44px;">Sí</th>
-          <th style="width:44px;">No</th>
-        </tr>
-        <% if (roscas.length === 0) { %>
-        <tr><td colspan="4" class="center">Sin verificación de roscas registrada.</td></tr>
-        <% } %>
-        <% roscas.forEach((r) => {
-          const p = getAccessoryPhoto(r?.id) || allPhotos.find((ph) => ph.category === 'roscas_conexiones');
-        %>
-        <tr>
-          <td class="center"><%= r.item || '—' %></td>
-          <td class="center">
-            <% if (p && (p.pdfSrc || p.thumbnailUrl || p.driveUrl)) { %>
-              <img class="thread-photo" src="<%= p.pdfSrc || p.thumbnailUrl || p.driveUrl %>" alt="<%= r.item || 'rosca' %>" />
-            <% } else { %>
-              —
-            <% } %>
-          </td>
-          <td class="center"><%= r.cumple === true ? 'X' : '' %></td>
-          <td class="center"><%= r.cumple === false ? 'X' : '' %></td>
-        </tr>
-        <% }) %>
-      </table>
     </div>
     <div class="page-number">Página <%= ++pageNum %> de <%= totalPages %></div>
   </div>

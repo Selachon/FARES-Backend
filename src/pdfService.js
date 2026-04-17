@@ -17,12 +17,6 @@ import {
   LABELS_EQUIPOS,
 } from "./inspectionTypes.js";
 
-const EXCLUDED_PDF_PHOTO_CATEGORIES = new Set([
-  "hermeticidad",
-  "prueba_hidrostatica",
-  "medicion_espesores",
-]);
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -40,6 +34,7 @@ class PdfService {
     };
     this.signatureCache = new Map();
     this.browser = null;
+    this.maxEmbeddedPhotos = 36;
   }
 
   normalizeSelectedSections(selectedSections) {
@@ -133,20 +128,69 @@ class PdfService {
     }
   }
 
-  async enrichPhotosForPdf(photos) {
+  async enrichPhotosForPdf(photos, { embedLimit = this.maxEmbeddedPhotos } = {}) {
     if (!Array.isArray(photos) || photos.length === 0) return [];
 
     const enriched = await Promise.all(
-      photos.map(async (photo) => {
-        const embeddedSrc = await this.resolvePhotoDataUri(photo);
+      photos.map(async (photo, index) => {
+        const fileId =
+          photo?.driveFileId ||
+          driveService.extractFileIdFromLink(photo?.driveUrl) ||
+          driveService.extractFileIdFromLink(photo?.thumbnailUrl);
+
+        const shouldEmbed = index < Math.max(0, Number(embedLimit) || 0);
+        const embeddedSrc = shouldEmbed ? await this.resolvePhotoDataUri(photo) : null;
+        const thumbSrc =
+          (fileId && driveService.getThumbnailUrl(fileId, "w1200")) ||
+          photo?.thumbnailUrl ||
+          photo?.driveUrl ||
+          null;
+
         return {
           ...photo,
-          pdfSrc: embeddedSrc || photo?.thumbnailUrl || photo?.driveUrl || null,
+          pdfSrc: embeddedSrc || thumbSrc,
         };
       }),
     );
 
     return enriched;
+  }
+
+  isTargetClosedError(error) {
+    const message = String(error?.message || "");
+    return (
+      message.includes("Target closed") ||
+      message.includes("Session closed") ||
+      message.includes("Protocol error")
+    );
+  }
+
+  async waitForImagesToSettle(page, timeoutMs = 15000) {
+    try {
+      await page.evaluate(
+        async (timeout) => {
+          const images = Array.from(document.images || []);
+          if (!images.length) return;
+
+          const waitImage = (img) =>
+            new Promise((resolve) => {
+              if (img.complete) return resolve();
+
+              const done = () => resolve();
+              img.addEventListener("load", done, { once: true });
+              img.addEventListener("error", done, { once: true });
+            });
+
+          await Promise.race([
+            Promise.all(images.map((img) => waitImage(img))),
+            new Promise((resolve) => setTimeout(resolve, timeout)),
+          ]);
+        },
+        timeoutMs,
+      );
+    } catch (_) {
+      // Best effort: PDF generation can continue even if this wait fails.
+    }
   }
 
   /**
@@ -196,7 +240,7 @@ class PdfService {
       inspectorSignature: this.getSignatureDataUriForSigner(inspection?.inspector),
       directorSignature: this.getSignatureDataUriForSigner(inspection?.directorTecnico),
       formatDate: (dateStr) => {
-        if (!dateStr) return "—";
+        if (!dateStr) return "";
         const date = new Date(dateStr);
         return date.toLocaleDateString("es-CO", {
           year: "numeric",
@@ -206,7 +250,7 @@ class PdfService {
       },
       formatEvaluacion: (value) => {
         const map = { C: "CUMPLE", NC: "NO CUMPLE", NA: "N/A" };
-        return map[value] || value || "—";
+        return map[value] || value || "";
       },
     };
 
@@ -220,10 +264,37 @@ class PdfService {
    * @returns {Promise<Buffer>} - Buffer del PDF generado
    */
   async generatePdf(certificate, selectedPhotoIds = null, selectedSections = null) {
+    try {
+      return await this.generatePdfWithOptions(certificate, selectedPhotoIds, selectedSections, {
+        embedLimit: this.maxEmbeddedPhotos,
+      });
+    } catch (error) {
+      if (!this.isTargetClosedError(error)) throw error;
+
+      logger.warn("Retrying PDF generation after Chromium target close", {
+        certId: certificate.id,
+        numCert: certificate.numCert,
+      });
+
+      await this.closeBrowser().catch(() => {});
+
+      return this.generatePdfWithOptions(certificate, selectedPhotoIds, selectedSections, {
+        embedLimit: 0,
+      });
+    }
+  }
+
+  async generatePdfWithOptions(
+    certificate,
+    selectedPhotoIds = null,
+    selectedSections = null,
+    { embedLimit = this.maxEmbeddedPhotos } = {},
+  ) {
     const startTime = Date.now();
     logger.info("Starting PDF generation", {
       certId: certificate.id,
       numCert: certificate.numCert,
+      photoEmbedLimit: embedLimit,
     });
 
     try {
@@ -242,11 +313,7 @@ class PdfService {
         photosToInclude = photosToInclude.filter((p) => p.includeInPdf !== false);
       }
 
-      photosToInclude = photosToInclude.filter(
-        (p) => !EXCLUDED_PDF_PHOTO_CATEGORIES.has(String(p.category || "")),
-      );
-
-      photosToInclude = await this.enrichPhotosForPdf(photosToInclude);
+      photosToInclude = await this.enrichPhotosForPdf(photosToInclude, { embedLimit });
 
       // Agrupar fotos por categoría
       const photosByCategory = {};
@@ -272,32 +339,37 @@ class PdfService {
       const browser = await this.getBrowser();
       const page = await browser.newPage();
 
-      await page.setContent(html, {
-        waitUntil: "networkidle0",
-        timeout: 30000,
-      });
+      try {
+        await page.setContent(html, {
+          waitUntil: "networkidle0",
+          timeout: 45000,
+        });
 
-      const pdfBuffer = await page.pdf({
-        format: "Letter",
-        scale: 0.95,
-        printBackground: true,
-        margin: {
-          top: "0.5in",
-          right: "0.5in",
-          bottom: "0.5in",
-          left: "0.5in",
-        },
-      });
+        await this.waitForImagesToSettle(page, 15000);
 
-      await page.close();
+        const pdfBuffer = await page.pdf({
+          format: "Letter",
+          scale: 0.95,
+          printBackground: true,
+          margin: {
+            top: "0.5in",
+            right: "0.5in",
+            bottom: "0.5in",
+            left: "0.5in",
+          },
+        });
 
-      logger.info("PDF generated successfully", {
-        certId: certificate.id,
-        sizeKb: Math.round(pdfBuffer.length / 1024),
-        elapsedMs: Date.now() - startTime,
-      });
+        logger.info("PDF generated successfully", {
+          certId: certificate.id,
+          sizeKb: Math.round(pdfBuffer.length / 1024),
+          elapsedMs: Date.now() - startTime,
+          photosCount: photosToInclude.length,
+        });
 
-      return pdfBuffer;
+        return pdfBuffer;
+      } finally {
+        await page.close().catch(() => {});
+      }
     } catch (error) {
       logger.error("PDF generation failed", {
         certId: certificate.id,
