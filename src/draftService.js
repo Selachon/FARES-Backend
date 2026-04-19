@@ -270,11 +270,23 @@ class DraftService {
           }
 
           const incomingFormatosLink = sanitizeString(data.links?.formatos);
+          const isIntegratedInspectionSync = !!data.inspeccionCompleta;
           if (incomingFormatosLink && incomingFormatosLink !== "#") {
             const existingLinks = existing.links || {};
             const existingFormatosLink = sanitizeString(existingLinks.formatos);
             if (!existingFormatosLink || existingFormatosLink === "#") {
               patch.links = { ...existingLinks, formatos: incomingFormatosLink };
+            }
+          }
+
+          if (isIntegratedInspectionSync) {
+            const existingLinks = existing.links || {};
+            const existingFormatosLink = sanitizeString(existingLinks.formatos);
+            if (existingFormatosLink && existingFormatosLink !== "#") {
+              patch.links = {
+                ...(patch.links || existingLinks),
+                formatos: "#",
+              };
             }
           }
 
@@ -789,6 +801,11 @@ class DraftService {
       const { te, ti } = this.validatePublishableDraft(draft);
 
       const preparedDriveAssets = await this.organizeDriveAssetsForPublish(draft);
+      const shouldDisableFormatos = !!draft.inspeccionCompleta;
+      const normalizedLinks = {
+        ...(preparedDriveAssets.links || {}),
+        ...(shouldDisableFormatos ? { formatos: "#" } : {}),
+      };
 
       
       await userService.validateUsersExist(draft.assignedUsers, draft.empresa);
@@ -809,7 +826,7 @@ class DraftService {
         tipoInspeccion: ti,
         status: "ACTIVO",
         renewedAt: null,
-        links: preparedDriveAssets.links || {
+        links: normalizedLinks || {
           informes: "#",
           formatos: "#",
           certificados: "#",
