@@ -21,8 +21,8 @@ import { inventoryService } from "../inventoryService.js";
 import archiver from "archiver";
 import { ObjectId } from "mongodb";
 import { driveService } from "../driveService.js";
-import { excelService } from "../excelService.js";
 import { pdfService } from "../pdfService.js";
+import { certDocService } from "../certDocService.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from 'url';
@@ -1050,6 +1050,104 @@ router.post(
   }),
 );
 
+// ==================== CERTIFICATE DOCUMENT GENERATION ====================
+
+/**
+ * Genera el PDF del certificado de inspección usando el template .docm en Drive.
+ * Solo disponible cuando resultado === "CUMPLE". Devuelve el blob PDF para previsualización.
+ */
+router.post(
+  "/certificates/:id/generate-cert",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const certificate = await certificateService.getCertificateById(id);
+
+    if (certificate.resultado !== "CUMPLE") {
+      return res.status(400).json({
+        message: "Solo se puede generar certificado para registros que CUMPLEN",
+        code: "NOT_CUMPLE",
+      });
+    }
+
+    const pdfBuffer = await certDocService.generatePdf(certificate);
+    const filename = `CERT_${certificate.empresa}_${certificate.numCert}_${certificate.serial || "S-N"}.pdf`;
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Length", pdfBuffer.length);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.status(200).end(pdfBuffer);
+  }),
+);
+
+/**
+ * Genera el PDF del certificado y lo sube a Drive.
+ * Si ya existe un CERT enlazado, lo mueve a Obsoletos antes de subir el nuevo.
+ * Actualiza links.certificados en la BD con el nuevo enlace.
+ */
+router.post(
+  "/certificates/:id/upload-cert",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const certificate = await certificateService.getCertificateById(id);
+
+    if (certificate.resultado !== "CUMPLE") {
+      return res.status(400).json({
+        message: "Solo se puede generar certificado para registros que CUMPLEN",
+        code: "NOT_CUMPLE",
+      });
+    }
+
+    // Archivar el CERT existente en Obsoletos antes de reemplazarlo.
+    const existingCertLink = certificate.links?.certificados;
+    if (existingCertLink && existingCertLink !== "#") {
+      const existingFileId = driveService.extractFileIdFromLink(existingCertLink);
+      if (existingFileId && certificate.storage?.obsoletosFolderId) {
+        try {
+          await driveService.moveToObsoletos(existingFileId, certificate.storage.obsoletosFolderId);
+          logger.info("CERT anterior archivado en Obsoletos", { fileId: existingFileId });
+        } catch (err) {
+          logger.warn("No se pudo archivar el CERT anterior", { error: err.message });
+        }
+      }
+    }
+
+    const pdfBuffer = await certDocService.generatePdf(certificate);
+    const filename = `CERT_${certificate.empresa}_${certificate.numCert}_${certificate.serial || "S-N"}.pdf`;
+
+    // Garantizar que el árbol de carpetas del certificado existe.
+    let storage = certificate.storage || {};
+    if (!storage.rootFolderId) {
+      storage = await driveService.ensureCertificateFolderTree(certificate.numCert);
+    }
+
+    const uploadResult = await driveService.uploadBufferFile({
+      buffer: pdfBuffer,
+      fileName: filename,
+      mimeType: "application/pdf",
+      folderId: storage.rootFolderId,
+      appProperties: {
+        NumCert: String(certificate.numCert),
+        Serial: String(certificate.serial || ""),
+        Usuario: certificate.empresa || "",
+      },
+    });
+
+    const updatedLinks = { ...certificate.links, certificados: uploadResult.webViewLink };
+    const storageUpdate = !certificate.storage?.rootFolderId ? { storage } : {};
+
+    await certificateService.updateCertificate(id, { links: updatedLinks, ...storageUpdate }, {});
+
+    res.json({
+      success: true,
+      certUrl: uploadResult.webViewLink,
+      certFileId: uploadResult.id,
+      message: "Certificado generado y subido exitosamente",
+    });
+  }),
+);
+
 // Mobile app endpoints used by the offline-first sync client.
 // These routes use appGuard instead of role-based admin/user guards.
 
@@ -1628,9 +1726,7 @@ router.post(
       logger.warn('Inventory site creation failed', { error: error.message });
     }
 
-    // Feature flags for workbook-based outputs.
-    // Keep disabled: we no longer generate/upload Excel as `formatos`.
-    const ENABLE_EXCEL_FORMAT_UPLOAD = false;
+    // App sync no longer uses workbook outputs.
     const ENABLE_AUTO_PDF = false;
 
     const deviceInspector = String(req.appClient?.inspector || "").trim();
@@ -1680,74 +1776,14 @@ router.post(
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 
     const timestamp = Date.now();
-    const excelPath = path.join(tempDir, `inspection_${timestamp}.xlsx`);
     const pdfSourceExcelPath = path.join(tempDir, `inspection_pdf_source_${timestamp}.xlsx`);
     const pdfPath = path.join(tempDir, `inspection_${timestamp}.pdf`);
 
     const serialForName = draftData.serial || 'INSPECCION';
-    const empresaForName = draftData.empresa || 'DRAFT';
     const numCertForName = draftData.numCert || 'DRAFT';
-    const excelFileName = `${empresaForName}_${numCertForName}_${serialForName}_${timestamp}.xlsx`;
 
     let draft;
-    let excelUploadResult = null;
     try {
-      if (ENABLE_EXCEL_FORMAT_UPLOAD) {
-        logger.info("Step 1: Filling Excel template", { serial: draftData.serial });
-        const workbook = await excelService.fillTemplate(inspectionData);
-        logger.info("Step 1 complete: Excel template filled");
-
-        logger.info("Step 2: Saving main Excel workbook");
-        await excelService.saveWorkbook(workbook, excelPath);
-        logger.info("Step 2 complete: Excel saved", { excelPath });
-
-        // Optional PDF path, intentionally disabled for current operations.
-        if (ENABLE_AUTO_PDF) {
-          logger.info("Step 3: Cloning workbook for PDF");
-          const pdfWorkbook = await excelService.cloneWorkbook(workbook);
-          // Exclude categories that should not appear in the PDF report.
-          excelService.insertPhotoRecords(pdfWorkbook, inspectionData.fotos || [], {
-            excludeCategories: ['revision_interna', 'prueba_hidrostatica', 'medicion_espesores', 'proteccion_catodica'],
-          });
-          excelService.prepareWorkbookForPdf(pdfWorkbook, [
-            'Prueba Hidrostática',
-            'SOPORTE',
-          ]);
-          await excelService.saveWorkbook(pdfWorkbook, pdfSourceExcelPath);
-          logger.info("Step 3 complete: PDF source ready", { pdfSourceExcelPath });
-
-          logger.info("Step 4: Converting Excel to PDF via Google Sheets");
-          await driveService.convertExcelToPdf(pdfSourceExcelPath, pdfPath);
-          logger.info("Step 4 complete: PDF generated", { pdfPath });
-        }
-
-        logger.info("Step 3: Uploading Excel to Drive");
-        const dbFolders = await driveService.getDriveFolders();
-        const informesFolder =
-          dbFolders.INF ||
-          config.google.drive.folders.INF ||
-          config.google.drive.parentFolderId;
-        const excelTargetFolder = draftStorage?.rootFolderId || informesFolder;
-
-        excelUploadResult = await driveService.uploadFile({
-          localPath: excelPath,
-          fileName: excelFileName,
-          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          appProperties: {
-            Usuario: String(draftData.assignedUsers || ''),
-            NumCert: String(numCertForName),
-            Serial: String(serialForName),
-          },
-          folderId: excelTargetFolder,
-        });
-
-        logger.info("Step 3 complete: Excel uploaded to Drive", {
-          folder: draftStorage?.rootFolderId ? "CERT_ROOT" : "INF",
-          fileName: excelFileName,
-          link: excelUploadResult?.webViewLink,
-        });
-      }
-
       // 4) Upload photos to Drive and prepare photo metadata
       logger.info("Step 4: Processing photos for Drive upload");
       const processedPhotos = [];
@@ -1900,15 +1936,7 @@ router.post(
         draftData.storage = draftStorage;
       }
 
-      if (ENABLE_EXCEL_FORMAT_UPLOAD && excelUploadResult?.webViewLink) {
-        draftData.links = {
-          ...(draftData.links || {}),
-          formatos: excelUploadResult.webViewLink,
-          ...(draftStorage?.rootFolderLink
-            ? { driveFolder: draftStorage.rootFolderLink }
-            : {}),
-        };
-      } else if (draftStorage?.rootFolderLink) {
+      if (draftStorage?.rootFolderLink) {
         draftData.links = {
           ...(draftData.links || {}),
           driveFolder: draftStorage.rootFolderLink,
@@ -1933,14 +1961,6 @@ router.post(
       res.status(201).json(draft);
     } finally {
       // Always clean up temporary files.
-      if (ENABLE_EXCEL_FORMAT_UPLOAD) {
-        try {
-          fs.unlinkSync(excelPath);
-        } catch (_err) {
-          // Best-effort cleanup.
-        }
-      }
-
       if (ENABLE_AUTO_PDF) {
         try {
           fs.unlinkSync(pdfSourceExcelPath);

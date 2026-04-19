@@ -3,6 +3,7 @@
 import { google } from "googleapis";
 import fs from "fs";
 import https from "https";
+import { Readable } from "stream";
 import { config } from "./config.js";
 import { logger, retryOperation, pickFirst } from "./utils.js";
 import { performanceMonitor } from "./performanceMonitor.js";
@@ -462,7 +463,44 @@ class DriveService {
     });
   }
 
-  
+  // Upload an in-memory Buffer directly to Drive without a local temp file.
+  async uploadBufferFile({ buffer, fileName, mimeType, folderId, appProperties = {} }) {
+    performanceMonitor.trackDriveOperation();
+
+    const targetFolder = folderId || config.google.drive.parentFolderId;
+    if (!targetFolder) {
+      throw new Error(
+        "No se configuró carpeta de destino: no llegó folderId y DRIVE_PARENT_FOLDER_ID está vacío",
+      );
+    }
+
+    await this.validateFolderAccess(targetFolder);
+
+    const stream = Readable.from(buffer);
+    const media = { mimeType, body: stream };
+
+    return retryOperation(async () => {
+      const response = await this.drive.files.create({
+        requestBody: {
+          name: fileName,
+          parents: [targetFolder],
+          mimeType,
+          description: this.buildDescription(appProperties),
+        },
+        media,
+        fields: "id, webViewLink, webContentLink, thumbnailLink",
+        supportsAllDrives: true,
+      });
+
+      this.setPermissions(response.data.id).catch((err) => {
+        logger.warn("Failed to set permissions", { fileId: response.data.id, error: err.message });
+      });
+
+      return response.data;
+    });
+  }
+
+
   async validateFolderAccess(folderId) {
     try {
       await this.getFileInfo(folderId);
