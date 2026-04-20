@@ -193,6 +193,18 @@ class PdfService {
     }
   }
 
+  sanitizeFileNamePart(value, fallback = "NA") {
+    const normalized = String(value ?? "").trim();
+    if (!normalized) return fallback;
+
+    return normalized
+      .replace(/[\\/]+/g, "-")
+      .replace(/[<>:"|?*\x00-\x1F]/g, "")
+      .replace(/\s+/g, " ")
+      .slice(0, 80)
+      .trim() || fallback;
+  }
+
   /**
    * Obtener instancia de browser (lazy initialization)
    */
@@ -400,7 +412,10 @@ class PdfService {
     }
 
     const timestamp = Date.now();
-    const pdfFileName = `INF_${certificate.empresa || "FARES"}_${certificate.numCert || "DRAFT"}_${certificate.serial || "SERIAL"}_${timestamp}.pdf`;
+    const safeEmpresa = this.sanitizeFileNamePart(certificate.empresa, "FARES");
+    const safeNumCert = this.sanitizeFileNamePart(certificate.numCert, "DRAFT");
+    const safeSerial = this.sanitizeFileNamePart(certificate.serial, "SERIAL");
+    const pdfFileName = `INF_${safeEmpresa}_${safeNumCert}_${safeSerial}_${timestamp}.pdf`;
     const tempPath = path.join(tempDir, pdfFileName);
 
     fs.writeFileSync(tempPath, pdfBuffer);
