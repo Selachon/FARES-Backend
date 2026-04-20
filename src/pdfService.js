@@ -349,6 +349,7 @@ class PdfService {
 
         const pdfBuffer = await page.pdf({
           format: "Letter",
+          timeout: 120000,
           scale: 0.95,
           printBackground: true,
           margin: {
