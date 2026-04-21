@@ -34,7 +34,12 @@ class PdfService {
     };
     this.signatureCache = new Map();
     this.browser = null;
-    this.maxEmbeddedPhotos = 36;
+    // Embedding photos as base64 can explode HTML size and OOM low-memory hosts.
+    // Default to 0 (URL thumbnails only); can be tuned via env when needed.
+    this.maxEmbeddedPhotos = Math.max(
+      0,
+      Number.parseInt(process.env.PDF_MAX_EMBEDDED_PHOTOS || "0", 10) || 0,
+    );
   }
 
   normalizeSelectedSections(selectedSections) {
