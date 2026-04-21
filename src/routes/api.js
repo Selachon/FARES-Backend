@@ -630,10 +630,24 @@ router.put(
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const { inspeccionCompleta, fotos, ...recordUpdates } = req.body;
+    const hasFechaCargue = !!recordUpdates?.fechaCargue;
+    const fechaCargueDate = hasFechaCargue ? new Date(recordUpdates.fechaCargue) : null;
+    const fechaExpedicion = hasFechaCargue && !Number.isNaN(fechaCargueDate.getTime())
+      ? fechaCargueDate.toISOString().slice(0, 10)
+      : inspeccionCompleta?.datosInforme?.fechaExpedicion || null;
+    const normalizedInspection = inspeccionCompleta
+      ? {
+          ...inspeccionCompleta,
+          datosInforme: {
+            ...(inspeccionCompleta.datosInforme || {}),
+            ...(fechaExpedicion ? { fechaExpedicion } : {}),
+          },
+        }
+      : inspeccionCompleta;
     
     const draft = await draftService.updateDraft(id, {
       ...recordUpdates,
-      inspeccionCompleta,
+      inspeccionCompleta: normalizedInspection,
       fotos,
     }, {});
     
@@ -650,10 +664,24 @@ router.put(
   asyncHandler(async (req, res) => {
     const { id } = req.params;
     const { inspeccionCompleta, fotos, ...recordUpdates } = req.body;
+    const hasFechaCargue = !!recordUpdates?.fechaCargue;
+    const fechaCargueDate = hasFechaCargue ? new Date(recordUpdates.fechaCargue) : null;
+    const fechaExpedicion = hasFechaCargue && !Number.isNaN(fechaCargueDate.getTime())
+      ? fechaCargueDate.toISOString().slice(0, 10)
+      : inspeccionCompleta?.datosInforme?.fechaExpedicion || null;
+    const normalizedInspection = inspeccionCompleta
+      ? {
+          ...inspeccionCompleta,
+          datosInforme: {
+            ...(inspeccionCompleta.datosInforme || {}),
+            ...(fechaExpedicion ? { fechaExpedicion } : {}),
+          },
+        }
+      : inspeccionCompleta;
     
     const certificate = await certificateService.updateCertificate(id, {
       ...recordUpdates,
-      inspeccionCompleta,
+      inspeccionCompleta: normalizedInspection,
       fotos,
     }, {});
     
@@ -965,6 +993,15 @@ router.post(
       });
     }
 
+    const draftInspector = String(draft.inspeccionCompleta?.inspector || "").trim();
+    const draftDirector = String(draft.inspeccionCompleta?.directorTecnico || "").trim();
+    if (!draftInspector || !draftDirector) {
+      return res.status(400).json({
+        message: "Inspector y Director Técnico son requeridos para generar el informe.",
+        code: "MISSING_SIGNATURE_ROLES",
+      });
+    }
+
     const pdfBuffer = await pdfService.generatePdf(
       draft,
       selectedPhotoIds,
@@ -998,6 +1035,15 @@ router.post(
       return res.status(400).json({
         message: "El certificado no tiene datos de inspección completa",
         code: "MISSING_INSPECTION_DATA",
+      });
+    }
+
+    const certInspector = String(certificate.inspeccionCompleta?.inspector || "").trim();
+    const certDirector = String(certificate.inspeccionCompleta?.directorTecnico || "").trim();
+    if (!certInspector || !certDirector) {
+      return res.status(400).json({
+        message: "Inspector y Director Técnico son requeridos para generar el informe.",
+        code: "MISSING_SIGNATURE_ROLES",
       });
     }
 
@@ -1735,6 +1781,17 @@ router.post(
       : "";
     inspectionData.inspector = deviceInspector || fallbackInspector || inspectionData.inspector || "";
     inspectionData.directorTecnico = "";
+
+    const cargueDate = draftData.fechaCargue
+      ? new Date(draftData.fechaCargue)
+      : new Date();
+    const cargueDateIso = Number.isNaN(cargueDate.getTime())
+      ? new Date().toISOString().slice(0, 10)
+      : cargueDate.toISOString().slice(0, 10);
+    inspectionData.datosInforme = {
+      ...(inspectionData.datosInforme || {}),
+      fechaExpedicion: cargueDateIso,
+    };
 
     const hasValidNumCert = Number.isFinite(Number(draftData.numCert)) && Number(draftData.numCert) > 0;
     if (!hasValidNumCert) {

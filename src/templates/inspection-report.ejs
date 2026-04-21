@@ -469,9 +469,12 @@
       'soldaduras',
       'roscas_conexiones',
       'hermeticidad',
-      'revision_interna',
       'soportes',
     ];
+
+    if (String(items.revisionInterna || '').toUpperCase() !== 'NA') {
+      annexCategories.push('revision_interna');
+    }
 
     const normalizeTag = (value) =>
       String(value || '')
@@ -551,7 +554,7 @@
             <tr><td class="label">Número de Informe</td><td><%= inspectionData.datosInforme?.numeroInforme || certificate.numCert || '—' %></td></tr>
             <tr><td class="label">Tipo de Inspección</td><td><%= inspectionData.datosInforme?.tipoInspeccion || certificate.tipoInspeccion || '—' %></td></tr>
             <tr><td class="label">Fecha de Inspección</td><td><%= formatDate(inspectionData.datosInforme?.fechaInspeccion) %></td></tr>
-            <tr><td class="label">Fecha de Expedición</td><td><%= formatDate(inspectionData.datosInforme?.fechaExpedicion || inspectionData.datosInforme?.fechaInspeccion) %></td></tr>
+            <tr><td class="label">Fecha de Expedición</td><td><%= formatDate(certificate.fechaCargue || inspectionData.datosInforme?.fechaExpedicion || inspectionData.datosInforme?.fechaInspeccion) %></td></tr>
           </table>
         </div>
       </div>
@@ -573,6 +576,7 @@
             <tr><td class="label">Presión diseño</td><td><%= inspectionData.informacionItem?.presionDisenio || '—' %> <%= inspectionData.informacionItem?.unidadPresionDisenio || '' %></td></tr>
             <tr><td class="label">Clase de uso</td><td><%= inspectionData.informacionItem?.claseUso || '—' %></td></tr>
             <tr><td class="label">Ubicación</td><td><%= inspectionData.informacionItem?.ubicacion || '—' %></td></tr>
+            <tr><td class="label">Nombre ubicación</td><td><%= inspectionData.informacionItem?.nombreUbicacion || '—' %></td></tr>
             <tr><td class="label">Dirección</td><td><%= inspectionData.informacionItem?.direccion || '—' %></td></tr>
           </table>
           <div class="blue-title">Recibido por</div>
