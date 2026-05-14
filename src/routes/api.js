@@ -27,6 +27,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from 'url';
 import crypto from "crypto";
+import ExcelJS from "exceljs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -96,6 +97,8 @@ const normalizeInspectorName = (value) =>
     .trim()
     .replace(/\s+/g, " ")
     .slice(0, 120);
+
+const canGenerateReports = (user) => String(user?.role || "").toUpperCase() === "ADMIN";
 
 const appDevicesCollection = async () => {
   const db = await connect();
@@ -606,7 +609,7 @@ router.get(
     const certificate = await certificateService.getCertificateById(id);
     
     // Verificar permisos: ADMIN ve todo, USER solo sus certificados asignados
-    if (role !== "ADMIN") {
+    if (role !== "ADMIN" && role !== "SUPERVISOR") {
       const isAssigned = certificate.assignedUsers?.includes(username);
       const sameEmpresa = certificate.empresa === empresa;
       if (!isAssigned || !sameEmpresa) {
@@ -981,6 +984,13 @@ router.post(
   "/drafts/:id/generate-pdf",
   adminGuard,
   asyncHandler(async (req, res) => {
+    if (!canGenerateReports(req.user)) {
+      return res.status(403).json({
+        message: "SUPERVISOR no puede crear informes",
+        code: "INSUFFICIENT_PERMISSIONS",
+      });
+    }
+
     const { id } = req.params;
     const { selectedPhotoIds, selectedSections } = req.body;
 
@@ -1026,6 +1036,13 @@ router.post(
   "/certificates/:id/generate-pdf",
   adminGuard,
   asyncHandler(async (req, res) => {
+    if (!canGenerateReports(req.user)) {
+      return res.status(403).json({
+        message: "SUPERVISOR no puede crear informes",
+        code: "INSUFFICIENT_PERMISSIONS",
+      });
+    }
+
     const { id } = req.params;
     const { selectedPhotoIds, selectedSections, uploadToDrive = true } = req.body;
 
@@ -2107,6 +2124,120 @@ router.get(
     const { id } = req.query;
     const fileInfo = await configService.getDriveFileInfo(id);
     res.json(fileInfo);
+  }),
+);
+
+router.get(
+  "/admin/reports/daily-inspector",
+  adminGuard,
+  asyncHandler(async (req, res) => {
+    const date = String(req.query?.date || "").trim();
+    const inspector = normalizeInspectorName(req.query?.inspector || "");
+
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ message: "date debe tener formato YYYY-MM-DD", code: "BAD_REQUEST" });
+    }
+    if (!inspector) {
+      return res.status(400).json({ message: "inspector es requerido", code: "BAD_REQUEST" });
+    }
+
+    const start = new Date(`${date}T00:00:00.000Z`);
+    const end = new Date(`${date}T23:59:59.999Z`);
+
+    const inspectorRegex = new RegExp(`^${inspector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    const db = await connect();
+
+    const [certificates, drafts] = await Promise.all([
+      db
+        .collection("certificates")
+        .find({
+          fechaCargue: { $gte: start, $lte: end },
+          "inspeccionCompleta.inspector": inspectorRegex,
+        })
+        .sort({ createdAt: 1, numCert: 1 })
+        .toArray(),
+      db
+        .collection("drafts")
+        .find({
+          fechaCargue: { $gte: start, $lte: end },
+          "inspeccionCompleta.inspector": inspectorRegex,
+        })
+        .sort({ createdAt: 1, numCert: 1 })
+        .toArray(),
+    ]);
+
+    const allRows = [...certificates, ...drafts]
+      .sort((a, b) => {
+        const aTs = new Date(a?.createdAt || a?.fechaCargue || 0).getTime();
+        const bTs = new Date(b?.createdAt || b?.fechaCargue || 0).getTime();
+        if (aTs !== bTs) return aTs - bTs;
+        return Number(a?.numCert || 0) - Number(b?.numCert || 0);
+      });
+
+    const templatePath = path.join(__dirname, "..", "templates", "new-visita.xlsx");
+    if (!fs.existsSync(templatePath)) {
+      return res.status(500).json({
+        message: "Plantilla [NEW] - VISITA no encontrada en el servidor",
+        code: "MISSING_TEMPLATE",
+      });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(templatePath);
+    const ws = workbook.getWorksheet("Hoja1") || workbook.worksheets[0];
+
+    const templateRowStart = 10;
+    const templateRowEnd = 17;
+    const templateRowCount = templateRowEnd - templateRowStart + 1;
+
+    const toText = (value) => String(value || "").trim();
+    const normalizeType = (value) => (toText(value).toUpperCase() === "TOTAL" ? "TOT" : "PAR");
+
+    ws.getCell("D5").value = date;
+    ws.getCell("C19").value = inspector;
+
+    if (allRows.length > templateRowCount) {
+      ws.spliceRows(templateRowEnd + 1, 0, ...Array(allRows.length - templateRowCount).fill([]));
+    }
+
+    allRows.forEach((item, index) => {
+      const rowNumber = templateRowStart + index;
+      const info = item?.inspeccionCompleta?.informacionItem || {};
+      const resultado = toText(item?.resultado).toUpperCase();
+      const efectiva = resultado === "CUMPLE" ? "SI" : "NO";
+      const location = toText(info?.nombreUbicacion || info?.direccion || "");
+      const capacity = toText(info?.capacidadNominal || info?.capacidad || "");
+      const place = toText(info?.ciudad || info?.municipio || info?.departamento || "");
+      const observation = efectiva === "NO" ? "VISITA NO EFECTIVA" : "";
+
+      ws.getCell(`B${rowNumber}`).value = location;
+      ws.getCell(`E${rowNumber}`).value = toText(item?.empresa);
+      ws.getCell(`F${rowNumber}`).value = toText(item?.serial);
+      ws.getCell(`H${rowNumber}`).value = capacity;
+      ws.getCell(`I${rowNumber}`).value = normalizeType(item?.tipoInspeccion || info?.tipoInspeccion);
+      ws.getCell(`J${rowNumber}`).value = toText(item?.numCert);
+      ws.getCell(`K${rowNumber}`).value = efectiva;
+      ws.getCell(`L${rowNumber}`).value = observation;
+      ws.getCell(`M${rowNumber}`).value = resultado === "CUMPLE" ? "C" : "NC";
+      ws.getCell(`N${rowNumber}`).value = observation;
+      ws.getCell(`O${rowNumber}`).value = place;
+      ws.getCell(`P${rowNumber}`).value = toText(info?.coordenadas || "");
+    });
+
+    for (let i = allRows.length; i < templateRowCount; i += 1) {
+      const rowNumber = templateRowStart + i;
+      ["B", "E", "F", "H", "I", "J", "K", "L", "M", "N", "O", "P"].forEach((col) => {
+        ws.getCell(`${col}${rowNumber}`).value = "";
+      });
+    }
+
+    const safeInspector = inspector.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 50) || "INSPECTOR";
+    const fileName = `NEW-Visita_${date}_${safeInspector}.xlsx`;
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.status(200).end(Buffer.from(buffer));
   }),
 );
 

@@ -284,7 +284,7 @@ class UserService {
         throw createError("Campos inválidos", 400);
       }
 
-      const allowedRoles = ["ADMIN", "USER"];
+      const allowedRoles = ["ADMIN", "USER", "SUPERVISOR"];
       if (!allowedRoles.includes(sanitizedRole)) {
         throw createError("role inválido", 400);
       }

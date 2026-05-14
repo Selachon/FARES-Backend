@@ -31,6 +31,7 @@ class PdfService {
       SERGIO: path.join(__dirname, "templates", "assets", "firma-sergio.png"),
       SOTO: path.join(__dirname, "templates", "assets", "firma-soto.png"),
       YULIAN: path.join(__dirname, "templates", "assets", "firma-yulian.png"),
+      DAVID: path.join(__dirname, "templates", "assets", "firma-david-rivera.png"),
     };
     this.signatureCache = new Map();
     this.browser = null;
@@ -96,6 +97,13 @@ class PdfService {
     if (normalized.includes("SERGIO")) return "SERGIO";
     if (normalized.includes("SOTO")) return "SOTO";
     if (normalized.includes("YULIAN")) return "YULIAN";
+    if (
+      normalized.includes("DAVID") ||
+      normalized.includes("EDILSON") ||
+      normalized.includes("RIVERA")
+    ) {
+      return "DAVID";
+    }
 
     return null;
   }

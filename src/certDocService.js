@@ -29,6 +29,7 @@ const SIGNATURE_PATHS = {
   SERGIO: path.join(__dirname, "templates", "assets", "firma-sergio.png"),
   SOTO:   path.join(__dirname, "templates", "assets", "firma-soto.png"),
   YULIAN: path.join(__dirname, "templates", "assets", "firma-yulian.png"),
+  DAVID:  path.join(__dirname, "templates", "assets", "firma-david-rivera.png"),
 };
 
 // Page layout constants (template is US Letter 612×792 pt, two copies stacked)
@@ -150,6 +151,7 @@ class CertDocService {
     if (n.includes("SERGIO")) return "SERGIO";
     if (n.includes("SOTO"))   return "SOTO";
     if (n.includes("YULIAN") || n.includes("JULIÁN") || n.includes("JULIAN")) return "YULIAN";
+    if (n.includes("DAVID") || n.includes("EDILSON") || n.includes("RIVERA")) return "DAVID";
     return null;
   }
 

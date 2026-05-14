@@ -102,9 +102,10 @@ export const adminGuard = (req, res, next) => {
     if (err) return;
     
     // Verificar rol ADMIN
-    if (req.user.role?.toUpperCase() !== "ADMIN") {
+    const role = req.user.role?.toUpperCase();
+    if (role !== "ADMIN" && role !== "SUPERVISOR") {
       return res.status(403).json({ 
-        message: "Solo ADMIN",
+        message: "Solo ADMIN o SUPERVISOR",
         code: "INSUFFICIENT_PERMISSIONS"
       });
     }
