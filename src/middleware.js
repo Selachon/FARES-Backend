@@ -11,7 +11,19 @@ export const isAllowedOrigin = (origin) => {
 
   try {
     const parsed = new URL(origin);
-    return parsed.protocol === "https:" && parsed.hostname.endsWith(".onrender.com");
+    if (parsed.protocol === "https:" && parsed.hostname.endsWith(".onrender.com")) {
+      return true;
+    }
+    if ((parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.hostname.endsWith(".ts.net")) {
+      return true;
+    }
+    if (
+      parsed.hostname === "localhost" ||
+      parsed.hostname === "127.0.0.1"
+    ) {
+      return true;
+    }
+    return false;
   } catch {
     return false;
   }
