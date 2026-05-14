@@ -133,8 +133,8 @@ class CertificateService {
       performanceMonitor.trackDbQuery();
       const normalizedRole = String(role || "").toUpperCase();
 
-      // ADMIN sees all certificates
-      if (normalizedRole === "ADMIN") {
+      // ADMIN and SUPERVISOR see all certificates
+      if (normalizedRole === "ADMIN" || normalizedRole === "SUPERVISOR") {
         return this.getAllCertificates();
       }
 
