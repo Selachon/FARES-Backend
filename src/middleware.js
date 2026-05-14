@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 
 export const isAllowedOrigin = (origin) => {
   if (!origin) return true;
+  if (origin === "null") return true;
   if (config.cors.allowedOrigins.includes(origin)) return true;
 
   try {
