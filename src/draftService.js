@@ -36,6 +36,7 @@ class DraftService {
       assignedUsers: Array.isArray(d.assignedUsers) ? d.assignedUsers : [],
       tipoEquipo: d.tipoEquipo ?? null,
       tipoInspeccion: d.tipoInspeccion ?? null,
+      inspector: sanitizeString(d.inspeccionCompleta?.inspector || "") || null,
       status: d.status ?? "DRAFT",
       links: d.links || { informes: "#", formatos: "#", certificados: "#", anexos: "#", driveFolder: "#" },
       source: d.source || "offline_app",

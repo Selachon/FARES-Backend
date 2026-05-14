@@ -596,6 +596,7 @@ class CertificateService {
       tipoEquipo: certificate.tipoEquipo || null,
       tipoInspeccion: certificate.tipoInspeccion || null,
       createdBy: sanitizeString(certificate.createdBy || "") || null,
+      inspector: sanitizeString(certificate.inspeccionCompleta?.inspector || "") || null,
 
       
       status: exp?.computedStatus || certificate.status || "ACTIVO",

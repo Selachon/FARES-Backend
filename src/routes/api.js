@@ -98,6 +98,220 @@ const normalizeInspectorName = (value) =>
     .replace(/\s+/g, " ")
     .slice(0, 120);
 
+const normalizePlaceKey = (value) =>
+  String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+
+const formatPlaceName = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\s+D\s*\.?\s*C\s*\.?$/i, " D.C.")
+    .toLocaleUpperCase("es-CO");
+
+const parseCoordinate = (value) => {
+  if (value === null || value === undefined || value === "") return NaN;
+  return Number(value);
+};
+
+const COLOMBIA_DEPARTMENT_KEYS = new Set([
+  "AMAZONAS",
+  "ANTIOQUIA",
+  "ARAUCA",
+  "ATLANTICO",
+  "BOGOTA",
+  "BOGOTA D C",
+  "BOLIVAR",
+  "BOYACA",
+  "CALDAS",
+  "CAQUETA",
+  "CASANARE",
+  "CAUCA",
+  "CESAR",
+  "CHOCO",
+  "CORDOBA",
+  "CUNDINAMARCA",
+  "D C",
+  "GUAINIA",
+  "GUAVIARE",
+  "HUILA",
+  "LA GUAJIRA",
+  "MAGDALENA",
+  "META",
+  "NARINO",
+  "NORTE DE SANTANDER",
+  "PUTUMAYO",
+  "QUINDIO",
+  "RISARALDA",
+  "SAN ANDRES",
+  "SANTANDER",
+  "SUCRE",
+  "TOLIMA",
+  "VALLE DEL CAUCA",
+  "VAUPES",
+  "VICHADA",
+]);
+
+const SITE_PLACE_HINTS = [
+  { pattern: /\bCOLSERGAS\b/, place: "FUNZA" },
+  { pattern: /\bCAZUCA\b/, place: "SOACHA" },
+  { pattern: /\bCHILCO\s+MADRID\b|\bMADRID\b/, place: "MADRID" },
+  { pattern: /\bCHILCOMET\b|\bCHILCOMED\b/, place: "IBAGUÉ" },
+  { pattern: /\bCOPACABANA\b/, place: "COPACABANA" },
+  { pattern: /\bFOMEQUE\b/, place: "FÓMEQUE" },
+  { pattern: /\bCHOACHI\b/, place: "CHOACHÍ" },
+];
+
+const isUsefulAddressPart = (value) => {
+  const key = normalizePlaceKey(value);
+  if (!key) return false;
+  if (/^\d+$/.test(key)) return false;
+  if (/^[A-Z0-9]{4,}\s?[+]\s?[A-Z0-9]{2,}$/.test(String(value || "").trim().toUpperCase())) return false;
+  if (key === "COLOMBIA") return false;
+  if (key === "UNNAMED ROAD") return false;
+  return true;
+};
+
+const isLikelyPlaceCandidate = (value) => {
+  if (!isUsefulAddressPart(value)) return false;
+  const key = normalizePlaceKey(value);
+  if (/^(AV|AVENIDA|CALLE|CL|CARRERA|CRA|DIAGONAL|DG|KM|KILOMETRO|LOCAL|TRANSVERSAL|TV|VIA)\b/.test(key)) {
+    return false;
+  }
+  if (String(value || "").includes("#")) return false;
+  return true;
+};
+
+const extractPlaceFromAddress = (address) => {
+  const parts = String(address || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(isUsefulAddressPart);
+
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const key = normalizePlaceKey(parts[index]);
+    if (!COLOMBIA_DEPARTMENT_KEYS.has(key)) continue;
+
+    const previous = parts[index - 1];
+    if (!isLikelyPlaceCandidate(previous)) continue;
+
+    const previousKey = normalizePlaceKey(previous);
+    if (key === "D C" && previousKey === "BOGOTA") {
+      return "BOGOTÁ D.C.";
+    }
+    return formatPlaceName(previous);
+  }
+
+  return "";
+};
+
+const extractPlaceFromSiteName = (name) => {
+  const key = normalizePlaceKey(name);
+  const hint = SITE_PLACE_HINTS.find((item) => item.pattern.test(key));
+  return hint?.place || "";
+};
+
+const findNearestSite = (sites, latitud, longitud) => {
+  const lat = parseCoordinate(latitud);
+  const lng = parseCoordinate(longitud);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const site of sites) {
+    const siteLat = parseCoordinate(site?.latitud);
+    const siteLng = parseCoordinate(site?.longitud);
+    if (!Number.isFinite(siteLat) || !Number.isFinite(siteLng)) continue;
+
+    const distance = Math.hypot(lat - siteLat, lng - siteLng);
+    if (distance < nearestDistance) {
+      nearest = site;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearestDistance <= 0.003 ? nearest : null;
+};
+
+const reverseGeocodePlace = async (info, cache) => {
+  const lat = parseCoordinate(info?.latitud);
+  const lng = parseCoordinate(info?.longitud);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "";
+
+  const key = `${lat.toFixed(5)},${lng.toFixed(5)}`;
+  if (cache.has(key)) return cache.get(key);
+
+  try {
+    const params = new URLSearchParams({
+      format: "jsonv2",
+      lat: String(lat),
+      lon: String(lng),
+      "accept-language": "es",
+    });
+    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?${params.toString()}`, {
+      headers: { "User-Agent": "FARES-report-generator/1.0" },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      cache.set(key, "");
+      return "";
+    }
+
+    const data = await response.json();
+    const address = data?.address || {};
+    const place = formatPlaceName(
+      address.city ||
+      address.town ||
+      address.municipality ||
+      address.village ||
+      address.county ||
+      "",
+    );
+    cache.set(key, place);
+    return place;
+  } catch (error) {
+    logger.warn("No se pudo resolver municipio por coordenadas", { error: error.message, lat, lng });
+    cache.set(key, "");
+    return "";
+  }
+};
+
+const resolveInspectionPlace = ({ info, client, sites, siteByName }) => {
+  const explicitPlace = formatPlaceName(info?.ciudad || info?.municipio || info?.departamento || "");
+  if (explicitPlace) return explicitPlace;
+
+  const siteName = info?.nombreUbicacion || "";
+  const site = siteByName.get(normalizePlaceKey(siteName));
+  const siteAddressPlace = extractPlaceFromAddress(site?.address);
+  if (siteAddressPlace) return siteAddressPlace;
+
+  const nearestSite = findNearestSite(sites, info?.latitud, info?.longitud);
+  const nearestAddressPlace = extractPlaceFromAddress(nearestSite?.address);
+  if (nearestAddressPlace) return nearestAddressPlace;
+
+  const siteNamePlace = extractPlaceFromSiteName(siteName) || extractPlaceFromSiteName(site?.name) || extractPlaceFromSiteName(nearestSite?.name);
+  if (siteNamePlace) return siteNamePlace;
+
+  const addressPlace = extractPlaceFromAddress(info?.direccion);
+  if (addressPlace) return addressPlace;
+
+  const hasInspectionLocation = Boolean(
+    String(siteName || "").trim() ||
+    String(info?.direccion || "").trim() ||
+    Number.isFinite(parseCoordinate(info?.latitud)) ||
+    Number.isFinite(parseCoordinate(info?.longitud)),
+  );
+
+  return hasInspectionLocation
+    ? ""
+    : formatPlaceName(client?.ciudad || client?.municipio || client?.departamento || "");
+};
+
 const canGenerateReports = (user) => String(user?.role || "").toUpperCase() === "ADMIN";
 
 const appDevicesCollection = async () => {
@@ -401,7 +615,7 @@ router.post(
       res.setHeader("Content-Type", "application/zip");
       res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`);
 
-      const archive = archiver("zip", { zlib: { level: 9 } });
+      const archive = archiver("zip", { zlib: { level: 1 } });
       archive.on("error", (err) => {
         throw err;
       });
@@ -423,14 +637,14 @@ router.post(
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${mainName}"`);
 
-    const main = archiver("zip", { zlib: { level: 9 } });
+    const main = archiver("zip", { zlib: { level: 1 } });
     main.on("error", (err) => {
       throw err;
     });
     main.pipe(res);
 
     
-    const filePromises = certPayloads.map(async (c) => {
+    for (const c of certPayloads) {
       if (c.files.length === 1) {
         const f = c.files[0];
         const { name, stream } = await driveService.downloadFileStream(f.fileId);
@@ -439,7 +653,7 @@ router.post(
       } else {
         const innerZipName = `${c.numCert} - ${c.serial}.zip`;
 
-        const inner = archiver("zip", { zlib: { level: 9 } });
+        const inner = archiver("zip", { zlib: { level: 1 } });
         inner.on("error", (err) => {
           throw err;
         });
@@ -453,9 +667,7 @@ router.post(
         }
         await inner.finalize();
       }
-    });
-
-    await Promise.all(filePromises);
+    }
 
     await main.finalize();
   }),
@@ -2147,7 +2359,7 @@ router.get(
     const inspectorRegex = new RegExp(`^${inspector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
     const db = await connect();
 
-    const [certificates, drafts] = await Promise.all([
+    const [certificates, drafts, sites] = await Promise.all([
       db
         .collection("certificates")
         .find({
@@ -2163,6 +2375,10 @@ router.get(
           "inspeccionCompleta.inspector": inspectorRegex,
         })
         .sort({ createdAt: 1, numCert: 1 })
+        .toArray(),
+      db
+        .collection("inventory_sites")
+        .find({}, { projection: { name: 1, address: 1, latitud: 1, longitud: 1 } })
         .toArray(),
     ]);
 
@@ -2192,6 +2408,18 @@ router.get(
 
     const toText = (value) => String(value || "").trim();
     const normalizeType = (value) => (toText(value).toUpperCase() === "TOTAL" ? "TOT" : "PAR");
+    const formatCoordinates = (info) => {
+      const explicit = toText(info?.coordenadas);
+      if (explicit) return explicit;
+
+      const lat = parseCoordinate(info?.latitud);
+      const lng = parseCoordinate(info?.longitud);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      }
+
+      return "";
+    };
 
     ws.getCell("D5").value = date;
     ws.getCell("C19").value = inspector;
@@ -2200,14 +2428,26 @@ router.get(
       ws.spliceRows(templateRowEnd + 1, 0, ...Array(allRows.length - templateRowCount).fill([]));
     }
 
-    allRows.forEach((item, index) => {
+    const siteByName = new Map(
+      sites
+        .filter((site) => normalizePlaceKey(site?.name))
+        .map((site) => [normalizePlaceKey(site.name), site]),
+    );
+    const reverseGeocodeCache = new Map();
+
+    for (const [index, item] of allRows.entries()) {
       const rowNumber = templateRowStart + index;
-      const info = item?.inspeccionCompleta?.informacionItem || {};
+      const inspection = item?.inspeccionCompleta || {};
+      const info = inspection?.informacionItem || {};
+      const client = inspection?.datosCliente || {};
       const resultado = toText(item?.resultado).toUpperCase();
       const efectiva = resultado === "CUMPLE" ? "SI" : "NO";
       const location = toText(info?.nombreUbicacion || info?.direccion || "");
       const capacity = toText(info?.capacidadNominal || info?.capacidad || "");
-      const place = toText(info?.ciudad || info?.municipio || info?.departamento || "");
+      const place =
+        resolveInspectionPlace({ info, client, sites, siteByName }) ||
+        await reverseGeocodePlace(info, reverseGeocodeCache);
+      const coordinates = formatCoordinates(info);
       const observation = efectiva === "NO" ? "VISITA NO EFECTIVA" : "";
 
       ws.getCell(`B${rowNumber}`).value = location;
@@ -2221,8 +2461,8 @@ router.get(
       ws.getCell(`M${rowNumber}`).value = resultado === "CUMPLE" ? "C" : "NC";
       ws.getCell(`N${rowNumber}`).value = observation;
       ws.getCell(`O${rowNumber}`).value = place;
-      ws.getCell(`P${rowNumber}`).value = toText(info?.coordenadas || "");
-    });
+      ws.getCell(`P${rowNumber}`).value = coordinates;
+    }
 
     for (let i = allRows.length; i < templateRowCount; i += 1) {
       const rowNumber = templateRowStart + i;
@@ -2232,12 +2472,43 @@ router.get(
     }
 
     const safeInspector = inspector.replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 50) || "INSPECTOR";
-    const fileName = `NEW-Visita_${date}_${safeInspector}.xlsx`;
+    const fileName = `Reporte_${date}_${safeInspector}.xlsx`;
     const buffer = await workbook.xlsx.writeBuffer();
 
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
     res.status(200).end(Buffer.from(buffer));
+  }),
+);
+
+router.get(
+  "/admin/reports/inspectors",
+  adminGuard,
+  asyncHandler(async (_req, res) => {
+    const db = await connect();
+    const [certificateInspectors, draftInspectors, deviceInspectors, tokenInspectors] = await Promise.all([
+      db.collection("certificates").distinct("inspeccionCompleta.inspector"),
+      db.collection("drafts").distinct("inspeccionCompleta.inspector"),
+      db.collection("app_devices").distinct("inspectorName"),
+      db.collection("enrollment_tokens").distinct("inspectorName"),
+    ]);
+
+    const names = new Set(
+      [
+        ...certificateInspectors,
+        ...draftInspectors,
+        ...deviceInspectors,
+        ...tokenInspectors,
+      ]
+        .map(normalizeInspectorName)
+        .filter(Boolean),
+    );
+
+    res.json(
+      Array.from(names).sort((a, b) =>
+        a.localeCompare(b, "es", { sensitivity: "base" }),
+      ),
+    );
   }),
 );
 

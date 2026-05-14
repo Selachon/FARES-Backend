@@ -40,7 +40,8 @@ const corsOptions = {
   origin: (origin, callback) => {
     callback(null, isAllowedOrigin(origin));
   },
-  credentials: true                    // Permitir cookies y autenticación
+  credentials: true,                   // Permitir cookies y autenticación
+  exposedHeaders: ["Content-Disposition"],
 };
 app.use(cors(corsOptions));
 // Habilitar preflight OPTIONS con las mismas restricciones de origen

@@ -5,6 +5,12 @@ import { logger } from "./utils.js";
 import { performanceMonitor } from "./performanceMonitor.js";
 import jwt from "jsonwebtoken";
 
+const isTailscaleIpv4 = (hostname) => {
+  const parts = String(hostname || "").split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) return false;
+  return parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127;
+};
+
 export const isAllowedOrigin = (origin) => {
   if (!origin) return true;
   if (origin === "null") return true;
@@ -12,10 +18,13 @@ export const isAllowedOrigin = (origin) => {
 
   try {
     const parsed = new URL(origin);
-    if (parsed.protocol === "https:" && parsed.hostname.endsWith(".onrender.com")) {
+    if (parsed.protocol === "https:" && (parsed.hostname.endsWith(".onrender.com") || parsed.hostname === "fares-backend-production-5ce2.up.railway.app")) {
       return true;
     }
     if ((parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.hostname.endsWith(".ts.net")) {
+      return true;
+    }
+    if ((parsed.protocol === "http:" || parsed.protocol === "https:") && isTailscaleIpv4(parsed.hostname)) {
       return true;
     }
     if (

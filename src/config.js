@@ -60,9 +60,10 @@ export const config = {
       // Tiempo máximo en cola de espera (5 segundos)
       waitQueueTimeoutMS: 5000,
       // Habilitar TLS/SSL
-      tls: true,
-      // Solo permitir certificados TLS inválidos en desarrollo local
-      ...(LOCAL_DEV && {
+      tls: process.env.MONGODB_TLS === "0" ? false : true,
+      // Solo permitir certificados TLS inválidos cuando se habilite explícitamente.
+      // Atlas no necesita esto y puede rechazar la negociación TLS si está activo.
+      ...(process.env.MONGODB_TLS_ALLOW_INVALID === "1" && {
         tlsAllowInvalidCertificates: true,
         tlsAllowInvalidHostnames: true,
       }),
