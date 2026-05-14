@@ -5,6 +5,18 @@ import { logger } from "./utils.js";
 import { performanceMonitor } from "./performanceMonitor.js";
 import jwt from "jsonwebtoken";
 
+export const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  if (config.cors.allowedOrigins.includes(origin)) return true;
+
+  try {
+    const parsed = new URL(origin);
+    return parsed.protocol === "https:" && parsed.hostname.endsWith(".onrender.com");
+  } catch {
+    return false;
+  }
+};
+
 // Validar configuración al cargar el módulo
 validateConfig();
 
@@ -15,7 +27,7 @@ export const corsMiddleware = (req, res, next) => {
   
   // Permitir solicitudes sin origin (ej: herramientas API, Postman)
   // o si el origin está en la lista de permitidos
-  if (!origin || config.cors.allowedOrigins.includes(origin)) {
+  if (isAllowedOrigin(origin)) {
     return next();
   }
   
@@ -258,7 +270,7 @@ export const csrfProtection = (req, res, next) => {
   }
 
   // Check against allowed origins
-  if (!config.cors.allowedOrigins.includes(requestOrigin)) {
+  if (!isAllowedOrigin(requestOrigin)) {
     logger.warn("CSRF: Origin not in allowlist", {
       requestOrigin,
       allowedOrigins: config.cors.allowedOrigins,

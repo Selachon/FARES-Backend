@@ -10,6 +10,7 @@ import { config } from "./config.js";
 import { logger } from "./utils.js";
 import { 
   corsMiddleware, 
+  isAllowedOrigin,
   requestLogger, 
   errorHandler, 
   notFoundHandler,
@@ -36,7 +37,9 @@ app.use(helmet({
 
 // Configurar middleware CORS global con política consistente
 const corsOptions = {
-  origin: config.cors.allowedOrigins,  // Orígenes permitidos desde config
+  origin: (origin, callback) => {
+    callback(null, isAllowedOrigin(origin));
+  },
   credentials: true                    // Permitir cookies y autenticación
 };
 app.use(cors(corsOptions));
