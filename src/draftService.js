@@ -36,6 +36,8 @@ class DraftService {
       assignedUsers: Array.isArray(d.assignedUsers) ? d.assignedUsers : [],
       tipoEquipo: d.tipoEquipo ?? null,
       tipoInspeccion: d.tipoInspeccion ?? null,
+      recordType: d.recordType || (d.noConsecutive ? "visit_no_effective" : "inspection"),
+      noConsecutive: d.noConsecutive === true,
       inspector: sanitizeString(d.inspeccionCompleta?.inspector || "") || null,
       status: d.status ?? "DRAFT",
       links: d.links || { informes: "#", formatos: "#", certificados: "#", anexos: "#", driveFolder: "#" },
@@ -108,6 +110,14 @@ class DraftService {
     try {
       const db = await connect();
       const localId = data.localId ? sanitizeString(data.localId) : null;
+      const recordType =
+        sanitizeString(data.recordType || data.inspeccionCompleta?.recordType || '') === 'visit_no_effective'
+          ? 'visit_no_effective'
+          : 'inspection';
+      const noConsecutive =
+        recordType === 'visit_no_effective' ||
+        data.noConsecutive === true ||
+        String(data.noConsecutive || '').toLowerCase() === 'true';
 
       // IDEMPOTENCY CHECK FIRST: Prevent duplicate uploads on retries
       // Must happen BEFORE any side effects (file uploads)
@@ -212,8 +222,15 @@ class DraftService {
             }
           }
 
+          if (!existing.recordType) {
+            patch.recordType = recordType;
+          }
+          if (noConsecutive && existing.noConsecutive !== true) {
+            patch.noConsecutive = true;
+          }
+
           const existingNumCert = Number(existing.numCert);
-          if (!existing.numCert || Number.isNaN(existingNumCert)) {
+          if (!noConsecutive && (!existing.numCert || Number.isNaN(existingNumCert))) {
             patch.numCert = await this.getNextDraftNumber(db);
           }
 
@@ -330,8 +347,9 @@ class DraftService {
       }
 
       const doc = {
-        numCert:
-          data.numCert !== undefined && data.numCert !== ""
+        numCert: noConsecutive
+          ? null
+          : data.numCert !== undefined && data.numCert !== ""
             ? Number(data.numCert)
             : null,
         serial: data.serial !== undefined ? sanitizeString(data.serial) : "",
@@ -351,6 +369,8 @@ class DraftService {
           data.tipoInspeccion !== undefined
             ? String(data.tipoInspeccion).trim().toUpperCase()
             : null,
+        recordType,
+        noConsecutive,
         status: "DRAFT",
         links: data.links || {
           informes: "#",
@@ -373,7 +393,7 @@ class DraftService {
         fotos: normalizePhotos(data.fotos),
       };
 
-      if (!doc.numCert || Number.isNaN(doc.numCert)) {
+      if (!noConsecutive && (!doc.numCert || Number.isNaN(doc.numCert))) {
         doc.numCert = await this.getNextDraftNumber(db);
       }
 
@@ -445,6 +465,8 @@ class DraftService {
       "tipoInspeccion",
       "links",
       "source",
+      "recordType",
+      "noConsecutive",
     ];
 
     for (const field of allowed) {
@@ -467,6 +489,8 @@ class DraftService {
           ? String(data.tipoInspeccion).trim().toUpperCase()
           : null;
       else if (field === "links") updates.links = data.links;
+      else if (field === "noConsecutive")
+        updates.noConsecutive = data.noConsecutive === true || String(data.noConsecutive || '').toLowerCase() === 'true';
       else updates[field] = sanitizeString(data[field]);
     }
 

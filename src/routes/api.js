@@ -1968,6 +1968,17 @@ router.post(
       });
     }
 
+    const normalizedRecordType = String(draftData.recordType || inspectionData?.recordType || '').trim();
+    const isVisitNoEffective = normalizedRecordType === 'visit_no_effective';
+    const noConsecutive =
+      isVisitNoEffective ||
+      draftData.noConsecutive === true ||
+      String(draftData.noConsecutive || '').toLowerCase() === 'true' ||
+      inspectionData?.noConsecutive === true;
+
+    draftData.recordType = isVisitNoEffective ? 'visit_no_effective' : 'inspection';
+    draftData.noConsecutive = noConsecutive;
+
     if (Array.isArray(inspectionData?.fotos) && photoFiles.length > 0) {
       const filesByField = new Map(photoFiles.map((file) => [file.fieldname, file]));
       inspectionData.fotos = inspectionData.fotos.map((photo) => {
@@ -2023,7 +2034,9 @@ router.post(
     };
 
     const hasValidNumCert = Number.isFinite(Number(draftData.numCert)) && Number(draftData.numCert) > 0;
-    if (!hasValidNumCert) {
+    if (noConsecutive) {
+      draftData.numCert = null;
+    } else if (!hasValidNumCert) {
       const db = await connect();
       const localId = String(draftData.localId || "").trim();
       let existingNumCert = null;
@@ -2048,7 +2061,9 @@ router.post(
 
     let draftStorage = null;
     try {
-      draftStorage = await driveService.ensureCertificateFolderTree(draftData.numCert);
+      if (!noConsecutive) {
+        draftStorage = await driveService.ensureCertificateFolderTree(draftData.numCert);
+      }
     } catch (error) {
       logger.warn("Could not ensure draft drive tree before app sync", {
         numCert: draftData.numCert,
@@ -2066,7 +2081,7 @@ router.post(
     const pdfPath = path.join(tempDir, `inspection_${timestamp}.pdf`);
 
     const serialForName = draftData.serial || 'INSPECCION';
-    const numCertForName = draftData.numCert || 'DRAFT';
+    const numCertForName = noConsecutive ? 'SIN_CONSECUTIVO' : (draftData.numCert || 'DRAFT');
 
     let draft;
     try {
