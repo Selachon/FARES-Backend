@@ -22,10 +22,10 @@ import apiRoutes from "./routes/api.js";
 // Crear instancia de aplicación Express
 const app = express();
 
-// Confiar en el proxy reverso (Render, Nginx, etc.) para obtener la IP real
+// Confiar en el proxy reverso (Railway, Render, Nginx, etc.) para obtener la IP real
 // del cliente a partir del header X-Forwarded-For. Sin esto, express-rate-limit
 // identifica a todos los usuarios con la IP del proxy.
-if (config.isRender || config.env === "production") {
+if (config.isRailway || config.isRender || config.env === "production") {
   app.set("trust proxy", 1);
 }
 

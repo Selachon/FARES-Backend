@@ -6,7 +6,7 @@ API REST para el sistema FARES de gestion de certificados de inspeccion tecnica.
 
 - **Runtime**: Node.js 18+
 - **Framework**: Express.js
-- **Base de datos**: MongoDB Atlas
+- **Base de datos**: MongoDB Atlas / Railway MongoDB
 - **Almacenamiento**: Google Drive API
 - **Autenticacion**: JWT (cookies HttpOnly)
 - **Email**: Brevo/SMTP
@@ -29,7 +29,7 @@ src/
 ## Requisitos
 
 - Node.js 18+
-- MongoDB Atlas (o local)
+- MongoDB Atlas, Railway MongoDB o local
 - Cuenta Google Cloud con Drive API habilitada
 - Cuenta Brevo (opcional, para emails)
 
@@ -45,7 +45,7 @@ cp .env.example .env
 
 | Variable | Descripcion |
 |----------|-------------|
-| `MONGODB_URI` | URI de conexion a MongoDB |
+| `MONGODB_URI` / `MONGO_URL` | URI de conexion a MongoDB |
 | `JWT_SECRET` | Secreto para firmar tokens de sesion |
 | `GOOGLE_OAUTH_CLIENT_ID` | Client ID de Google OAuth |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | Client Secret de Google OAuth |
@@ -144,18 +144,18 @@ El script mantiene la estructura de los certificados de la app y evita duplicado
 
 ## Deployment
 
-El proyecto esta configurado para Render.com:
+El proyecto esta preparado para Railway:
 
-1. Crear Web Service en Render
-2. Conectar repositorio GitHub
-3. Build command: `npm install`
-4. Start command: `npm start`
-5. Configurar variables de entorno en dashboard
+1. Crear servicio desde el directorio `FARES-Backend`
+2. Railway usa `railway.json` con Railpack, `npm start` y healthcheck `/healthz`
+3. Agregar MongoDB en Railway y configurar `MONGODB_URI=${{MongoDB.MONGO_URL}}` o exponer `MONGO_URL`
+4. Configurar secretos y `CORS_ALLOWED_ORIGINS` en el dashboard
+5. Ver `RAILWAY.md` para la migracion de datos
 
 ## Troubleshooting
 
-### Cold start en Render
-El plan gratuito de Render duerme el servicio despues de 15 min de inactividad. El primer request puede tardar 30-60 segundos.
+### Servicio iniciando
+El primer request puede tardar mas si Railway esta arrancando una nueva instancia.
 
 ### Token de Google Drive expirado
 Si los uploads fallan, regenerar el refresh token con `get-token.js`:
@@ -164,7 +164,7 @@ node get-token.js
 ```
 
 ### Conexion MongoDB rechazada
-Verificar que la IP del servidor este en la allowlist de MongoDB Atlas.
+Verificar que `MONGODB_URI` o `MONGO_URL` apunte a la base correcta. Si se usa Atlas, revisar la allowlist de red.
 
 ## Contacto
 

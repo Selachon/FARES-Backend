@@ -215,6 +215,7 @@ export function createEmptyInspeccionCompleta() {
     informacionItem: {
       numeroSerie: '',
       capacidad: '',
+      unidadCapacidad: 'GAL',
       fabricante: '',
       anioFabricacion: '',
       codigoFabricacion: '',

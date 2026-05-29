@@ -564,7 +564,7 @@
           <div class="blue-title">Información del Ítem Inspeccionado</div>
           <table class="info-table">
             <tr><td class="label">Número de serie / placa</td><td><%= inspectionData.informacionItem?.numeroSerie || certificate.serial || '—' %></td></tr>
-            <tr><td class="label">Capacidad</td><td><%= inspectionData.informacionItem?.capacidad || '—' %></td></tr>
+            <tr><td class="label">Capacidad</td><td><%= inspectionData.informacionItem?.capacidad || '—' %> <%= inspectionData.informacionItem?.unidadCapacidad || '' %></td></tr>
             <tr><td class="label">Fabricante</td><td><%= inspectionData.informacionItem?.fabricante || '—' %></td></tr>
             <tr><td class="label">Año fabricación</td><td><%= inspectionData.informacionItem?.anioFabricacion || '—' %></td></tr>
             <tr><td class="label">Código fabricación</td><td><%= inspectionData.informacionItem?.codigoFabricacion || '—' %></td></tr>

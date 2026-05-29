@@ -18,7 +18,10 @@ export const isAllowedOrigin = (origin) => {
 
   try {
     const parsed = new URL(origin);
-    if (parsed.protocol === "https:" && (parsed.hostname.endsWith(".onrender.com") || parsed.hostname === "fares-backend-production-5ce2.up.railway.app")) {
+    if (parsed.protocol === "https:" && config.cors.allowRenderOrigins && parsed.hostname.endsWith(".onrender.com")) {
+      return true;
+    }
+    if (parsed.protocol === "https:" && config.cors.allowRailwayOrigins && parsed.hostname.endsWith(".up.railway.app")) {
       return true;
     }
     if ((parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.hostname.endsWith(".ts.net")) {

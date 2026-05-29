@@ -5,10 +5,30 @@ import dotenv from "dotenv";
 // Cargar variables de entorno desde archivo .env
 dotenv.config();
 
+const parseCsv = (value) =>
+  String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 // Determinar si estamos en entorno de desarrollo local
 const LOCAL_DEV = process.env.LOCAL_DEV === "1";
 // Entorno de ejecución (development, production, etc.)
 const NODE_ENV = process.env.NODE_ENV || "development";
+const IS_RAILWAY = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_ID);
+const IS_RENDER = String(process.env.RENDER || "").toLowerCase() === "true";
+const MONGODB_URI = IS_RAILWAY
+  ? (process.env.MONGO_URL || process.env.MONGODB_URI || process.env.DATABASE_URL)
+  : (process.env.MONGODB_URI || process.env.MONGO_URL || process.env.DATABASE_URL);
+
+const inferMongoTls = (uri) => {
+  if (process.env.MONGODB_TLS !== undefined) {
+    return process.env.MONGODB_TLS !== "0";
+  }
+
+  const normalized = String(uri || "").toLowerCase();
+  return normalized.startsWith("mongodb+srv://") || normalized.includes("tls=true") || normalized.includes("ssl=true");
+};
 
 // Objeto de configuración centralizado
 export const config = {
@@ -16,8 +36,10 @@ export const config = {
   env: NODE_ENV,
   // Indica si es entorno local o no producción
   isLocal: LOCAL_DEV || NODE_ENV !== "production",
+  // Verifica si se está ejecutando en Railway
+  isRailway: IS_RAILWAY,
   // Verifica si se está ejecutando en Render.com
-  isRender: String(process.env.RENDER || "").toLowerCase() === "true",
+  isRender: IS_RENDER,
 
   // Configuración del servidor HTTP
   server: {
@@ -36,13 +58,16 @@ export const config = {
       "http://localhost:5173",
       // Agregar localhost con IP en desarrollo local
       ...(LOCAL_DEV ? ["http://127.0.0.1:5173"] : []),
+      ...parseCsv(process.env.CORS_ALLOWED_ORIGINS),
     ],
+    allowRailwayOrigins: process.env.ALLOW_RAILWAY_ORIGINS === "1" || IS_RAILWAY,
+    allowRenderOrigins: process.env.ALLOW_RENDER_ORIGINS === "1" || IS_RENDER,
   },
 
   // Configuración de la conexión a MongoDB
   mongodb: {
     // URI de conexión a la base de datos
-    uri: process.env.MONGODB_URI,
+    uri: MONGODB_URI,
     // Nombre de la base de datos (usa local si está definida, sino "fares")
     dbName: LOCAL_DEV && process.env.MONGODB_LOCAL_DB
         ? process.env.MONGODB_LOCAL_DB
@@ -60,7 +85,7 @@ export const config = {
       // Tiempo máximo en cola de espera (5 segundos)
       waitQueueTimeoutMS: 5000,
       // Habilitar TLS/SSL
-      tls: process.env.MONGODB_TLS === "0" ? false : true,
+      tls: inferMongoTls(MONGODB_URI),
       // Solo permitir certificados TLS inválidos cuando se habilite explícitamente.
       // Atlas no necesita esto y puede rechazar la negociación TLS si está activo.
       ...(process.env.MONGODB_TLS_ALLOW_INVALID === "1" && {
@@ -183,7 +208,6 @@ export const config = {
 
 // Lista de variables de entorno obligatorias para el funcionamiento del sistema
 const REQUIRED_VARS = [
-  "MONGODB_URI",                    // URI de conexión a MongoDB
   "GOOGLE_OAUTH_CLIENT_ID",         // ID de cliente OAuth de Google
   "GOOGLE_OAUTH_CLIENT_SECRET",     // Secreto de cliente OAuth de Google
   "GOOGLE_OAUTH_REFRESH_TOKEN",     // Token de refresco OAuth de Google
@@ -194,6 +218,10 @@ const REQUIRED_VARS = [
 export const validateConfig = () => {
   // Filtrar las variables que faltan
   const missing = REQUIRED_VARS.filter(varName => !process.env[varName]);
+
+  if (!config.mongodb.uri) {
+    missing.unshift("MONGODB_URI or MONGO_URL or DATABASE_URL");
+  }
 
   // Si faltan variables, lanzar error
   if (missing.length) {
