@@ -278,6 +278,8 @@ export function createEmptyInspeccionCompleta() {
     directorTecnico: '',
     resolucion: '',
     articulos: '',
+    fechaHoraInicioRegistro: '',
+    fechaHoraFinRegistro: '',
   };
 }
 
@@ -388,6 +390,8 @@ export function normalizeInspeccionCompleta(data) {
     directorTecnico: data.directorTecnico || '',
     resolucion: data.resolucion || '',
     articulos: data.articulos || '',
+    fechaHoraInicioRegistro: data.fechaHoraInicioRegistro || '',
+    fechaHoraFinRegistro: data.fechaHoraFinRegistro || '',
   };
 }
 
