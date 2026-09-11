@@ -10,6 +10,8 @@ import { userService } from "../userService.js";
 import { certificateService } from "../certificateService.js";
 import { configService } from "../configService.js";
 import { draftService } from "../draftService.js";
+import { cacheService } from "../cacheService.js";
+import { createRecordPhotoUpload } from "../recordPhotoUpload.js";
 import { adminGuard, healthMiddleware, userGuard, appGuard, authenticate } from "../middleware.js";
 import { notificationService } from "../notificationService.js";
 import { notificationInboxService } from "../notificationInboxService.js";
@@ -34,6 +36,13 @@ const __dirname = path.dirname(__filename);
 
 // Main Express router instance.
 const router = express.Router();
+const uploadRecordPhoto = createRecordPhotoUpload({
+  connect,
+  driveService,
+  cacheService,
+  getSectionName: (category) => draftService.getPhotoSectionFolderName(category),
+  parentFolderId: config.google.drive.parentFolderId,
+});
 
 // Login brute-force protection: 5 attempts per 15 minutes.
 const loginLimiter = rateLimit({
@@ -914,66 +923,7 @@ router.post(
   adminGuard,
   upload.single("photo"),
   asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const { category, description, includeInPdf } = req.body;
-    const file = req.file;
-
-    if (!file) {
-      return res.status(400).json({
-        message: "Se requiere una foto",
-        code: "MISSING_PHOTO",
-      });
-    }
-
-    const draft = await draftService.getDraftById(id);
-    const existingPhotos = draft.fotos || [];
-
-    // Subir foto a Drive
-    let photoData = {
-      id: `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      category: category || 'superficie',
-      description: description || '',
-      timestamp: new Date().toISOString(),
-      includeInPdf: includeInPdf !== 'false',
-      driveFileId: null,
-      driveUrl: null,
-    };
-
-    try {
-      const dbFolders = await driveService.getDriveFolders();
-      const photoFileName = `FOTO_${draft.serial || 'DRAFT'}_${category || 'foto'}_${Date.now()}.jpg`;
-      
-      const uploadResult = await driveService.uploadFile({
-        localPath: file.path,
-        fileName: photoFileName,
-        mimeType: file.mimetype || 'image/jpeg',
-        appProperties: {
-          NumCert: String(draft.numCert || 'DRAFT'),
-          Serial: String(draft.serial || 'DRAFT'),
-          Category: category || 'general',
-        },
-        folderId: dbFolders.INF || config.google.drive.parentFolderId,
-      });
-
-      photoData.driveFileId = uploadResult?.id || null;
-      photoData.driveUrl = uploadResult?.webViewLink || null;
-      photoData.thumbnailUrl =
-        driveService.getThumbnailUrl(photoData.driveFileId) ||
-        uploadResult?.thumbnailLink ||
-        null;
-    } catch (uploadErr) {
-      logger.warn("Failed to upload photo to Drive", { error: uploadErr.message });
-    } finally {
-      // Limpiar archivo temporal
-      try { fs.unlinkSync(file.path); } catch (_) {}
-    }
-
-    // Agregar foto al array existente
-    const updatedPhotos = [...existingPhotos, photoData];
-    
-    await draftService.updateDraft(id, { fotos: updatedPhotos }, {});
-    
-    res.status(201).json(photoData);
+    await uploadRecordPhoto("drafts", req, res);
   }),
 );
 
@@ -1060,62 +1010,7 @@ router.post(
   adminGuard,
   upload.single("photo"),
   asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const { category, description, includeInPdf } = req.body;
-    const file = req.file;
-
-    if (!file) {
-      return res.status(400).json({
-        message: "Se requiere una foto",
-        code: "MISSING_PHOTO",
-      });
-    }
-
-    const certificate = await certificateService.getCertificateById(id);
-    const existingPhotos = certificate.fotos || [];
-
-    let photoData = {
-      id: `photo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      category: category || 'superficie',
-      description: description || '',
-      timestamp: new Date().toISOString(),
-      includeInPdf: includeInPdf !== 'false',
-      driveFileId: null,
-      driveUrl: null,
-    };
-
-    try {
-      const dbFolders = await driveService.getDriveFolders();
-      const photoFileName = `FOTO_${certificate.serial || 'CERT'}_${category || 'foto'}_${Date.now()}.jpg`;
-      
-      const uploadResult = await driveService.uploadFile({
-        localPath: file.path,
-        fileName: photoFileName,
-        mimeType: file.mimetype || 'image/jpeg',
-        appProperties: {
-          NumCert: String(certificate.numCert || 'CERT'),
-          Serial: String(certificate.serial || 'CERT'),
-          Category: category || 'general',
-        },
-        folderId: dbFolders.INF || config.google.drive.parentFolderId,
-      });
-
-      photoData.driveFileId = uploadResult?.id || null;
-      photoData.driveUrl = uploadResult?.webViewLink || null;
-      photoData.thumbnailUrl =
-        driveService.getThumbnailUrl(photoData.driveFileId) ||
-        uploadResult?.thumbnailLink ||
-        null;
-    } catch (uploadErr) {
-      logger.warn("Failed to upload photo to Drive", { error: uploadErr.message });
-    } finally {
-      try { fs.unlinkSync(file.path); } catch (_) {}
-    }
-
-    const updatedPhotos = [...existingPhotos, photoData];
-    await certificateService.updateCertificate(id, { fotos: updatedPhotos }, {});
-    
-    res.status(201).json(photoData);
+    await uploadRecordPhoto("certificates", req, res);
   }),
 );
 
