@@ -144,6 +144,25 @@ El script mantiene la estructura de los certificados de la app y evita duplicado
 
 ## Deployment
 
+### Inventario y demo
+
+`/api/inventory` permite acceso únicamente a `ADMIN` y a la cuenta exacta `fares` con rol `USER` durante la demo. Los usuarios normales sólo consultan tanques de su empresa asignados a su usuario. Las escrituras y la revisión de asociaciones son exclusivas de ADMIN.
+
+Las operaciones de inventario requieren MongoDB con transacciones (replica set o clúster). La consulta de demos funciona también en MongoDB standalone. El despliegue no importa automáticamente certificados históricos ni cambia sus asignaciones; la conciliación se ejecuta desde el panel ADMIN.
+
+Las nuevas fotos manuales se almacenan en MongoDB junto con su asociación al tanque, en una transacción. La carpeta `uploads/inventory/cache` sólo contiene una caché regenerable de las fotos históricas de Drive. Los archivos locales anteriores siguen siendo compatibles, pero no deben usarse como almacenamiento persistente en Railway.
+
+Para preparar exclusivamente tres tanques ficticios para `fares`:
+
+```bash
+node scripts/seed-inventory-demo.js          # comprobar, sin escribir
+node scripts/seed-inventory-demo.js --apply  # crear únicamente los demos faltantes
+```
+
+El script usa `MONGODB_URI` y la base `fares` (o `INVENTORY_DEMO_DB`), conserva los demos existentes y no modifica certificados. Es una carga explícita compatible con standalone, no un reemplazo de las transacciones para las operaciones normales.
+
+Pruebas: `npm run test:inventory`. La suite utiliza una base desechable.
+
 El proyecto esta preparado para Railway:
 
 1. Crear servicio desde el directorio `FARES-Backend`

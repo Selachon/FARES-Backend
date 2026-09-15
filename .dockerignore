@@ -1,0 +1,9 @@
+.git
+.env
+.env.*
+node_modules
+.local-inventory
+.local-inventory-server.log
+uploads
+*.pdf
+*.zip

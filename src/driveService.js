@@ -31,6 +31,17 @@ class DriveService {
     
     // Create Drive API v3 client.
     this.drive = google.drive({ version: "v3", auth: this.oauth2 });
+    if (process.env.LOCAL_PREVIEW === '1') {
+      for (const resource of ['files', 'permissions']) {
+        for (const operation of ['create', 'update', 'delete', 'copy', 'emptyTrash']) {
+          if (this.drive[resource]?.[operation]) this.drive[resource][operation] = async () => {
+            const error = new Error('Las escrituras en Google Drive están desactivadas en la prueba local');
+            error.statusCode = 409;
+            throw error;
+          };
+        }
+      }
+    }
 
     
     // Trigger a lightweight token request to fail fast on bad credentials.
@@ -883,6 +894,11 @@ class DriveService {
       return false;
     }
 
+    const db = await connect();
+    if (await db.collection('inventory_tanks').findOne({$or:[{'cover.driveFileId':fileId},{'photos.driveFileId':fileId}]})) {
+      logger.info('File retained for inventory reference', { fileId });
+      return false;
+    }
     performanceMonitor.trackDriveOperation();
 
     return retryOperation(async () => {

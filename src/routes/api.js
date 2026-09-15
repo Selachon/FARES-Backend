@@ -20,6 +20,7 @@ import { performanceMonitor } from "../performanceMonitor.js";
 import { connect } from "../db.js";
 import { companyService } from "../companyService.js";
 import { inventoryService } from "../inventoryService.js";
+import inventoryRoutes from './inventory.js';
 import archiver from "archiver";
 import { ObjectId } from "mongodb";
 import { driveService } from "../driveService.js";
@@ -36,6 +37,7 @@ const __dirname = path.dirname(__filename);
 
 // Main Express router instance.
 const router = express.Router();
+router.use('/inventory', inventoryRoutes);
 const uploadRecordPhoto = createRecordPhotoUpload({
   connect,
   driveService,

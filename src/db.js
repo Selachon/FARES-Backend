@@ -7,6 +7,8 @@ import { logger } from "./utils.js";
 // Variables globales para mantener la conexión activa (singleton pattern)
 let client, db;
 
+export const getMongoClient = () => client;
+
 // Función principal para conectar a la base de datos MongoDB
 // Implementa patrón singleton para reutilizar la conexión existente
 export async function connect() {
@@ -159,4 +161,3 @@ async function seed(db) {
     logger.error("Seed operation failed", error);
   }
 }
-

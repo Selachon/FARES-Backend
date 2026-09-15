@@ -1,6 +1,7 @@
 // Servicio de gestión de borradores de certificados
 // Permite crear y editar borradores antes de publicarlos como certificados definitivos
 import { connect } from "./db.js";
+import { syncInventoryCertificate } from './tankService.js';
 import { logger, parseUserList, createError, sanitizeString } from "./utils.js";
 import { driveService } from "./driveService.js";
 import { userService } from "./userService.js";
@@ -873,6 +874,7 @@ class DraftService {
       if (computed?.computedStatus) document.status = computed.computedStatus;
 
       const insert = await db.collection("certificates").insertOne(document);
+      await syncInventoryCertificate(insert.insertedId);
       await db.collection(this.collectionName).deleteOne({ _id });
 
       cacheService.clear("all_certificates");

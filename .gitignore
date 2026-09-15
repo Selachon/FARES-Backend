@@ -2,6 +2,8 @@
 .env.local
 get-token.js
 node_modules/
+.local-inventory/
+.local-inventory-server.log
 
 # Uploaded files - NEVER commit user uploads
 uploads/*

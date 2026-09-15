@@ -8,7 +8,9 @@
     "start": "node src/index.js",
     "seed": "node scripts/seed.js",
     "import:certs:excel": "node scripts/import-certificates-from-excel.js",
-    "migrate:mongo:railway": "node scripts/migrate-mongodb-to-railway.js"
+    "migrate:mongo:railway": "node scripts/migrate-mongodb-to-railway.js",
+    "dev:inventory": "node scripts/local-inventory.js",
+    "test:inventory": "node --test test/inventory.test.js test/inventoryAccess.test.js test/recordPhotoUpload.test.js"
   },
   "dependencies": {
     "@sparticuz/chromium": "^138.0.2",
@@ -31,5 +33,8 @@
     "nodemailer": "^7.0.12",
     "pdf-lib": "^1.17.1",
     "puppeteer-core": "^24.39.1"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^10.4.3"
   }
 }

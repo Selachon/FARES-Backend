@@ -59,6 +59,7 @@ class EmailService {
   
   // Enviar correo de contacto desde formulario web
   async sendContactEmail({ nombre, email, asunto, mensaje, telefono = "" }) {
+    if (process.env.LOCAL_PREVIEW === '1') throw new Error('El envío de correo está desactivado en la prueba local');
     
     // Verificar que el servicio esté configurado
     if (!this.isConfigured()) {

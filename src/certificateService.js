@@ -8,6 +8,8 @@ import { cacheService } from "./cacheService.js";
 import { performanceMonitor } from "./performanceMonitor.js";
 import { ObjectId } from "mongodb";
 import { normalizeInspeccionCompleta, normalizePhotos } from "./inspectionTypes.js";
+import { syncInventoryCertificate } from './tankService.js';
+import { computeCertificateExpiry, yearsToExpire } from './certificateExpiry.js';
 
 class CertificateService {
   constructor() {
@@ -47,58 +49,14 @@ class CertificateService {
   }
 
   // Determinar años de validez según tipo de inspección y equipo
-  getYearsToExpire({ tipoInspeccion, tipoEquipo }) {
-    // Inspección parcial siempre es 1 año
-    if (tipoInspeccion === "PARCIAL") return 1;
-    // Inspección total depende del tipo de equipo
-    if (tipoInspeccion === "TOTAL") {
-      if (tipoEquipo === "CT") return 5;  // Calderas: 5 años
-      if (tipoEquipo === "TE") return 10; // Tanques: 10 años
-    }
-    return null;
+  getYearsToExpire(certificate) {
+    return yearsToExpire(certificate);
   }
 
-  // Calcular fecha de vencimiento y estado del certificado
   computeExpiry(certificate) {
-    const { tipoEquipo, tipoInspeccion, fechaCargue, status } = certificate;
-    
-    // Fecha base para cálculo (fecha de carga)
-    const baseDate = fechaCargue ? new Date(fechaCargue) : null;
-    const years = this.getYearsToExpire({ tipoInspeccion, tipoEquipo });
-
-    // Si no hay fecha base o no se puede determinar años, retornar valores nulos
-    if (!baseDate || !years) {
-      return {
-        dueDate: null,
-        daysLeft: null,
-        isExpiringSoon: false,
-        computedStatus: status || null,
-      };
-    }
-
-    // Calcular fecha de vencimiento sumando años a la fecha base
-    const due = this.addYears(baseDate, years);
-    const now = new Date();
-    const msLeft = due.getTime() - now.getTime();
-    const daysLeft = Math.floor(msLeft / 86400000); // Convertir milisegundos a días
-
-    // Determinar estado según si está renovado o ha vencido
-    const isRenewed = String(status || "").toUpperCase() === "RENOVADO";
-    let computedStatus = status || "ACTIVO";
-    if (!isRenewed) {
-      computedStatus = now > due ? "VENCIDO" : "ACTIVO";
-    }
-
-    return {
-      dueDate: due.toISOString(),
-      daysLeft,
-      isExpiringSoon: computedStatus === "ACTIVO" && daysLeft >= 0 && daysLeft <= 15, // Alerta 15 días antes
-      computedStatus,
-    };
+    return computeCertificateExpiry(certificate);
   }
 
-
-  
   async getAllCertificates() {
     try {
       performanceMonitor.trackDbQuery();
@@ -249,6 +207,7 @@ class CertificateService {
 
       
       const result = await db.collection("certificates").insertOne(document);
+      await syncInventoryCertificate(result.insertedId);
 
       logger.info("Certificate created", {
         id: result.insertedId,
@@ -331,6 +290,7 @@ class CertificateService {
       }
 
       await db.collection("certificates").updateOne({ _id }, { $set: updates });
+      await syncInventoryCertificate(_id);
 
       const updated = await db.collection("certificates").findOne({ _id });
       const normalizedCertificate = this.normalizeCertificate(updated);
@@ -393,7 +353,16 @@ class CertificateService {
       }
 
       const query = conditions.length === 1 ? conditions[0] : { $or: conditions };
+      const inventoryReferences = await db.collection('certificates').find(query, { projection: { tankId: 1, numCert: 1 } }).toArray();
       const result = await db.collection("certificates").deleteMany(query);
+      for (const certificate of inventoryReferences.filter(c => c.tankId)) {
+        await db.collection('inventory_events').insertOne({
+          tankId: certificate.tankId,
+          type: 'CERTIFICADO_RETIRADO', actor: 'sistema', createdAt: new Date(),
+          reason: `Certificado ${certificate.numCert} eliminado del panel; se conserva la ficha del tanque`,
+          certificateId: String(certificate._id),
+        });
+      }
 
       // Clear all certificate caches (global and user-scoped)
       cacheService.clear("all_certificates");
