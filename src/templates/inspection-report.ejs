@@ -386,7 +386,7 @@
             : 'result-ne';
 
     const showPage2 = sectionFlags.reporteEvaluacion !== false;
-    const showPage3 = sectionFlags.conexionesAccesorios !== false && !certificate.isLegacy;
+    const showPage3 = sectionFlags.conexionesAccesorios !== false;
 
     const medicionEspesores = inspectionData.medicionEspesores || {};
     const pruebaHidrostatica = inspectionData.pruebaHidrostatica || {};
@@ -425,7 +425,7 @@
     const showPage4 = sectionFlags.pruebaHidrostatica !== false && hasPruebaHidrostaticaData;
     const showPage5 = sectionFlags.pruebaHermeticidad !== false && hasPruebaHermeticidadData;
     const showPage6 = sectionFlags.medicionEspesores !== false && hasMedicionEspesoresData;
-    const showPage7 = sectionFlags.fotos !== false && (certificate.isLegacy || (photos && photos.length > 0));
+    const showPage7 = sectionFlags.fotos !== false && photos && photos.length > 0;
 
     const totalPages =
       1 +
@@ -513,8 +513,8 @@
           <td style="width:170px;padding:0;">
             <table class="header-meta" style="width:100%;height:100%;">
               <tr><td>Código: ID-PS-10</td></tr>
-              <tr><td>Versión: 5</td></tr>
-              <tr><td>Fecha: 2023-09-14</td></tr>
+              <tr><td>Versión: 6</td></tr>
+              <tr><td>Fecha: 2026-04-01</td></tr>
             </table>
           </td>
         </tr>
@@ -550,7 +550,6 @@
           <table class="info-table">
             <tr><td class="label">Número de Informe</td><td><%= inspectionData.datosInforme?.numeroInforme || certificate.numCert || '—' %></td></tr>
             <tr><td class="label">Tipo de Inspección</td><td><%= inspectionData.datosInforme?.tipoInspeccion || certificate.tipoInspeccion || '—' %></td></tr>
-            <tr><td class="label">Número de Formato</td><td><%= inspectionData.datosInforme?.numeroFormato || '—' %></td></tr>
             <tr><td class="label">Fecha de Inspección</td><td><%= formatDate(inspectionData.datosInforme?.fechaInspeccion) %></td></tr>
             <tr><td class="label">Fecha de Expedición</td><td><%= formatDate(certificate.fechaCargue || inspectionData.datosInforme?.fechaExpedicion || inspectionData.datosInforme?.fechaInspeccion) %></td></tr>
           </table>
@@ -577,12 +576,10 @@
             <tr><td class="label">Nombre ubicación</td><td><%= inspectionData.informacionItem?.nombreUbicacion || '—' %></td></tr>
             <tr><td class="label">Dirección</td><td><%= inspectionData.informacionItem?.direccion || '—' %></td></tr>
           </table>
-          <% if (!certificate.isLegacy) { %>
           <div class="blue-title">Recibido por</div>
           <div class="diag" style="min-height:36px;justify-content:flex-start;padding:8px;text-align:left;color:#111;font-style:normal;">
             <%= inspectionData.datosInforme?.recibidoPor || '—' %>
           </div>
-          <% } %>
         </div>
 
         <div class="box">
@@ -747,8 +744,8 @@
           <td style="width:170px;padding:0;">
             <table class="header-meta" style="width:100%;height:100%;">
               <tr><td>Código: ID-PS-10</td></tr>
-              <tr><td>Versión: 5</td></tr>
-              <tr><td>Fecha: 2023-09-14</td></tr>
+              <tr><td>Versión: 6</td></tr>
+              <tr><td>Fecha: 2026-04-01</td></tr>
             </table>
           </td>
         </tr>
@@ -816,8 +813,8 @@
           <td style="width:170px;padding:0;">
             <table class="header-meta" style="width:100%;height:100%;">
               <tr><td>Código: ID-PS-10</td></tr>
-              <tr><td>Versión: 5</td></tr>
-              <tr><td>Fecha: 2023-09-14</td></tr>
+              <tr><td>Versión: 6</td></tr>
+              <tr><td>Fecha: 2026-04-01</td></tr>
             </table>
           </td>
         </tr>
@@ -887,8 +884,8 @@
           <td style="width:170px;padding:0;">
             <table class="header-meta" style="width:100%;height:100%;">
               <tr><td>Código: ID-PS-10</td></tr>
-              <tr><td>Versión: 5</td></tr>
-              <tr><td>Fecha: 2023-09-14</td></tr>
+              <tr><td>Versión: 6</td></tr>
+              <tr><td>Fecha: 2026-04-01</td></tr>
             </table>
           </td>
         </tr>
@@ -980,8 +977,8 @@
           <td style="width:170px;padding:0;">
             <table class="header-meta" style="width:100%;height:100%;">
               <tr><td>Código: ID-PS-10</td></tr>
-              <tr><td>Versión: 5</td></tr>
-              <tr><td>Fecha: 2023-09-14</td></tr>
+              <tr><td>Versión: 6</td></tr>
+              <tr><td>Fecha: 2026-04-01</td></tr>
             </table>
           </td>
         </tr>
@@ -1049,8 +1046,8 @@
           <td style="width:170px;padding:0;">
             <table class="header-meta" style="width:100%;height:100%;">
               <tr><td>Código: ID-PS-10</td></tr>
-              <tr><td>Versión: 5</td></tr>
-              <tr><td>Fecha: 2023-09-14</td></tr>
+              <tr><td>Versión: 6</td></tr>
+              <tr><td>Fecha: 2026-04-01</td></tr>
             </table>
           </td>
         </tr>
